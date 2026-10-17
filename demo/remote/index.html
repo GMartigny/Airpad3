@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+    <title>Airpad3 – manette</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+        body {
+            margin: 0;
+            height: 100vh;
+            overflow: hidden;
+            font-family: system-ui, sans-serif;
+            background: #262626;
+            color: #eee;
+            touch-action: none;
+            user-select: none;
+            -webkit-user-select: none;
+            -webkit-touch-callout: none;
+        }
+        #status {
+            position: absolute;
+            inset: 0;
+            display: grid;
+            place-items: center;
+            text-align: center;
+            padding: 16px;
+        }
+        .pad {
+            display: flex;
+            height: 100%;
+        }
+        .arrows, .buttons {
+            flex: 1;
+            padding: 16px;
+        }
+        .arrows {
+            display: grid;
+            grid-template: repeat(3, 1fr) / repeat(3, 1fr);
+            gap: 4px;
+            aspect-ratio: 1;
+            max-height: 100%;
+            align-self: center;
+        }
+        .arrows [data-name="Up"] { grid-area: 1 / 2; }
+        .arrows [data-name="Left"] { grid-area: 2 / 1; }
+        .arrows [data-name="Right"] { grid-area: 2 / 3; }
+        .arrows [data-name="Down"] { grid-area: 3 / 2; }
+        .buttons {
+            display: flex;
+            align-items: center;
+            justify-content: space-evenly;
+        }
+        button {
+            border: none;
+            font: bold 1.5em system-ui, sans-serif;
+            color: #eee;
+            background: #111;
+        }
+        .buttons button {
+            width: 35%;
+            aspect-ratio: 1;
+            border-radius: 50%;
+            background: #C9211E;
+        }
+        button.pressed {
+            filter: brightness(1.4);
+        }
+        .hidden {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+<div id="status">Connexion…</div>
+<div class="pad hidden">
+    <div class="arrows">
+        <button data-name="Up">▲</button>
+        <button data-name="Left">◀</button>
+        <button data-name="Right">▶</button>
+        <button data-name="Down">▼</button>
+    </div>
+    <div class="buttons">
+        <button data-name="B">B</button>
+        <button data-name="A">A</button>
+    </div>
+</div>
+
+<script type="module">
+import { join } from "../../src/index.js";
+
+const status = document.getElementById("status");
+const id = location.hash.slice(1);
+
+if (!id) {
+    status.textContent = "Scanne le QR code affiché sur l'écran";
+}
+else {
+    try {
+        const pad = await join(id);
+        status.classList.add("hidden");
+        document.querySelector(".pad").classList.remove("hidden");
+
+        pad.on("message", ({ vibrate }) => {
+            if (vibrate) {
+                navigator.vibrate?.(vibrate);
+            }
+        });
+        pad.on("close", () => {
+            status.textContent = "Écran déconnecté";
+            status.classList.remove("hidden");
+        });
+
+        const press = (button, state) => {
+            const pressed = state === "down";
+            if (button.classList.contains("pressed") === pressed) {
+                return;
+            }
+            button.classList.toggle("pressed", pressed);
+            pad.send({ name: button.dataset.name, state });
+        };
+
+        document.querySelectorAll("button").forEach((button) => {
+            button.addEventListener("pointerdown", (event) => {
+                button.setPointerCapture(event.pointerId);
+                press(button, "down");
+            });
+            ["pointerup", "pointercancel", "lostpointercapture"].forEach((eventName) => {
+                button.addEventListener(eventName, () => press(button, "up"));
+            });
+            button.addEventListener("contextmenu", event => event.preventDefault());
+        });
+    }
+    catch (error) {
+        console.error(error);
+        status.textContent = error.message;
+    }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,8 @@
+{
+  "name": "airpad3-test",
+  "dependencies": {
+    "node-datachannel": "^0.33.4"
+  },
+  "private": true,
+  "type": "module"
+}

@@ -1,0 +1,28 @@
+{
+  "name": "airpad3",
+  "version": "0.1.0",
+  "description": "Connect a computer and a phone with a QR code, using WebRTC and serverless signaling",
+  "type": "module",
+  "main": "src/index.js",
+  "exports": "./src/index.js",
+  "files": [
+    "src"
+  ],
+  "scripts": {
+    "test": "cd test && npm install --silent && node --experimental-eventsource e2e.test.js",
+    "demo": "npx serve ."
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/GMartigny/airpad3.git"
+  },
+  "keywords": [
+    "webrtc",
+    "qrcode",
+    "controller",
+    "game",
+    "ntfy"
+  ],
+  "author": "GMartigny",
+  "license": "MIT"
+}
