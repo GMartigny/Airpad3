@@ -63,3 +63,7 @@ npm test
 ```
 
 The test runs a local fake ntfy server and two Node WebRTC peers (`node-datachannel`).
+
+## License
+
+[MIT](LICENSE) © Guillaume Martigny
