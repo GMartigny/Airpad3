@@ -11,19 +11,19 @@ const DEFAULT_ICE_SERVERS = [
 
 /**
  * @typedef {Object} AirpadOptions
- * @property {string} [server="https://ntfy.sh"] - serveur ntfy utilisé pour l'appairage
- * @property {RTCIceServer[]} [iceServers] - serveurs STUN/TURN
- * @property {number} [timeout] - délai max d'appairage, en millisecondes
+ * @property {string} [server="https://ntfy.sh"] - ntfy server used for pairing
+ * @property {RTCIceServer[]} [iceServers] - STUN/TURN servers
+ * @property {number} [timeout] - max pairing delay, in milliseconds
  */
 
 /**
  * @typedef {Object} Peer
  * @property {Function} on - on(eventName, callback) : "open", "message", "close", "error"
  * @property {Function} off - off(eventName, callback)
- * @property {Function} send - envoie une donnée sérialisable en JSON
- * @property {Function} close - ferme la connexion
- * @property {Promise<void>} ready - résolue à l'ouverture du canal
- * @property {RTCPeerConnection} connection - connexion WebRTC sous-jacente
+ * @property {Function} send - send any JSON-serializable data
+ * @property {Function} close - close the connection
+ * @property {Promise<void>} ready - resolved when the channel opens
+ * @property {RTCPeerConnection} connection - underlying WebRTC connection
  */
 
 /**
@@ -37,8 +37,8 @@ function randomId (length = 16) {
 }
 
 /**
- * Attend la fin de la collecte des candidats ICE, avec un délai max.
- * La réponse est envoyée en une fois, sans « trickle ICE ».
+ * Wait for ICE candidate gathering to complete, with a max delay.
+ * The description is sent in one go, without trickle ICE.
  * @param {RTCPeerConnection} connection -
  * @param {number} [timeout=2000] -
  * @return {Promise<void>}
@@ -73,7 +73,7 @@ function withTimeout (promise, timeout) {
     return Promise.race([
         promise,
         new Promise((resolve, reject) => {
-            timer = setTimeout(() => reject(new Error("Airpad: délai d'attente dépassé")), timeout);
+            timer = setTimeout(() => reject(new Error("Airpad: timed out")), timeout);
         }),
     ]).finally(() => clearTimeout(timer));
 }
@@ -102,7 +102,7 @@ function createPeer (connection, channelPromise) {
         },
         send (data) {
             if (channel?.readyState !== "open") {
-                throw new Error("Airpad: la connexion n'est pas ouverte");
+                throw new Error("Airpad: connection is not open");
             }
             channel.send(JSON.stringify(data));
         },
@@ -136,7 +136,7 @@ function createPeer (connection, channelPromise) {
 
     connection.addEventListener("connectionstatechange", () => {
         if (connection.connectionState === "failed") {
-            peer.emit("error", new Error("Airpad: la connexion WebRTC a échoué"));
+            peer.emit("error", new Error("Airpad: WebRTC connection failed"));
         }
     });
 
@@ -144,7 +144,7 @@ function createPeer (connection, channelPromise) {
 }
 
 /**
- * Côté écran (ordinateur) : crée une session et attend un contrôleur.
+ * Display side (computer): create a session and wait for a controller.
  * @param {AirpadOptions & {controllerUrl?: string}} [options] -
  * @return {Promise<Peer & {id: string, url?: string}>}
  */
@@ -195,9 +195,9 @@ export async function host (options = {}) {
 }
 
 /**
- * Côté contrôleur (mobile) : rejoint une session à partir de son ID.
- * Résolue une fois le canal ouvert.
- * @param {string} id - ID lu dans le QR code
+ * Controller side (phone): join a session from its ID.
+ * Resolves once the channel is open.
+ * @param {string} id - ID read from the QR code
  * @param {AirpadOptions} [options] -
  * @return {Promise<Peer>}
  */
@@ -213,7 +213,7 @@ export async function join (id, options = {}) {
     });
     const offer = await signaling.last("offer");
     if (!offer) {
-        throw new Error("Airpad: session introuvable");
+        throw new Error("Airpad: session not found");
     }
 
     const connection = new RTCPeerConnection({

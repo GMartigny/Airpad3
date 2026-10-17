@@ -1,28 +1,28 @@
 # Airpad3
 
-Connecte un ordinateur et un téléphone avec un QR code, en WebRTC, sans serveur à héberger.
+Connect a computer and a phone with a QR code, using WebRTC, with no server to host.
 
-L'appairage passe par [ntfy.sh](https://ntfy.sh), un pub/sub HTTP public et gratuit. Une fois connectés, les deux appareils échangent en pair-à-pair via un DataChannel WebRTC.
+Pairing goes through [ntfy.sh](https://ntfy.sh), a free public HTTP pub/sub. Once connected, both devices talk peer-to-peer over a WebRTC DataChannel.
 
-## Fonctionnement
+## How it works
 
-1. L'écran crée une offre WebRTC et la publie sur le topic ntfy `airpad-<id>`.
-2. Le QR code contient l'URL de la manette avec l'ID dans le fragment : `…/remote/#<id>`.
-3. La manette lit l'offre, publie sa réponse sur le même topic.
-4. L'écran reçoit la réponse (SSE, avec polling de secours) et la connexion directe s'ouvre.
+1. The display creates a WebRTC offer and publishes it on the ntfy topic `airpad-<id>`.
+2. The QR code holds the controller URL, with the ID in the fragment: `…/remote/#<id>`.
+3. The controller reads the offer and publishes its answer on the same topic.
+4. The display receives the answer (SSE, with a polling fallback) and the direct connection opens.
 
 ## Usage
 
 ```js
-// Écran
+// Display
 import { host } from "airpad3";
 
 const display = await host({ controllerUrl: "remote/" });
 showQrCode(display.url);
-display.on("open", () => console.log("Manette connectée"));
+display.on("open", () => console.log("Controller connected"));
 display.on("message", data => console.log(data));
 
-// Manette
+// Controller
 import { join } from "airpad3";
 
 const pad = await join(location.hash.slice(1));
@@ -31,30 +31,30 @@ pad.send({ name: "A", state: "down" });
 
 ### Options
 
-| Option | Défaut | Description |
+| Option | Default | Description |
 | --- | --- | --- |
-| `server` | `https://ntfy.sh` | Serveur ntfy (tu peux héberger le tien) |
-| `iceServers` | STUN Google | Serveurs STUN/TURN |
-| `timeout` | 5 min (écran), 15 s (manette) | Délai max d'appairage |
-| `controllerUrl` | – | URL de la page manette, pour construire `display.url` |
+| `server` | `https://ntfy.sh` | ntfy server (you can host your own) |
+| `iceServers` | Google STUN | STUN/TURN servers |
+| `timeout` | 5 min (display), 15 s (controller) | Max pairing delay |
+| `controllerUrl` | – | Controller page URL, used to build `display.url` |
 
-### Événements
+### Events
 
 `open`, `message`, `close`, `error`
 
-## Démo
+## Demo
 
 ```sh
 npm run demo
 ```
 
-Ouvre `/demo/` sur l'ordinateur et scanne le QR code avec un téléphone sur le même réseau.
+Open `/demo/` on the computer and scan the QR code with a phone on the same network.
 
-## Limites
+## Limitations
 
-- Les topics ntfy sont publics : l'ID aléatoire (16 caractères) suffit pour éviter les collisions, mais les données de signalisation ne sont pas chiffrées.
-- ntfy.sh applique des quotas par IP aux utilisateurs anonymes.
-- Hors réseau local, certains NAT nécessitent un serveur TURN.
+- ntfy topics are public: the random 16-character ID is enough to avoid collisions, but signaling data is not encrypted.
+- ntfy.sh applies per-IP rate limits to anonymous users.
+- Outside a local network, some NATs require a TURN server.
 
 ## Tests
 
@@ -62,4 +62,4 @@ Ouvre `/demo/` sur l'ordinateur et scanne le QR code avec un téléphone sur le 
 npm test
 ```
 
-Le test lance un faux serveur ntfy local et deux pairs WebRTC Node (`node-datachannel`).
+The test runs a local fake ntfy server and two Node WebRTC peers (`node-datachannel`).

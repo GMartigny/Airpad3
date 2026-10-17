@@ -1,12 +1,12 @@
-// Test bout en bout : faux serveur ntfy local + WebRTC Node (node-datachannel).
-// Lancer : node --experimental-eventsource e2e.test.js
+// End-to-end test: local fake ntfy server + Node WebRTC (node-datachannel).
+// Run: node --experimental-eventsource e2e.test.js
 import http from "node:http";
 import assert from "node:assert/strict";
 import { RTCPeerConnection } from "node-datachannel/polyfill";
 
 globalThis.RTCPeerConnection = RTCPeerConnection;
 
-// --- Faux ntfy : POST /topic, GET /topic/json?poll=1, GET /topic/sse?since=id
+// --- Fake ntfy: POST /topic, GET /topic/json?poll=1, GET /topic/sse?since=id
 const topics = new Map();
 const subscribers = new Map();
 let counter = 0;
@@ -103,11 +103,11 @@ assert.deepEqual(padReceived, {
     vibrate: 50,
 });
 
-await assert.rejects(join("inconnu", options), /session introuvable/);
+await assert.rejects(join("inconnu", options), /session not found/);
 
 pad.close();
 display.close();
 ntfy.closeAllConnections();
 ntfy.close();
-console.log("✓ appairage via ntfy, messages dans les deux sens, session inconnue rejetée");
+console.log("✓ pairing through ntfy, messages both ways, unknown session rejected");
 process.exit(0);

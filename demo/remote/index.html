@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="fr">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
-    <title>Airpad3 – manette</title>
+    <title>Airpad3 – controller</title>
     <style>
         * {
             box-sizing: border-box;
@@ -74,7 +74,7 @@
     </style>
 </head>
 <body>
-<div id="status">Connexion…</div>
+<div id="status">Connecting…</div>
 <div class="pad hidden">
     <div class="arrows">
         <button data-name="Up">▲</button>
@@ -95,7 +95,7 @@ const status = document.getElementById("status");
 const id = location.hash.slice(1);
 
 if (!id) {
-    status.textContent = "Scanne le QR code affiché sur l'écran";
+    status.textContent = "Scan the QR code shown on the display";
 }
 else {
     try {
@@ -109,7 +109,7 @@ else {
             }
         });
         pad.on("close", () => {
-            status.textContent = "Écran déconnecté";
+            status.textContent = "Display disconnected";
             status.classList.remove("hidden");
         });
 

@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="fr">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Airpad3 – écran</title>
+    <title>Airpad3 – display</title>
     <style>
         body {
             margin: 0;
@@ -33,7 +33,7 @@
 <body>
 <main>
     <div id="pairing">
-        <p id="status">Création de la session…</p>
+        <p id="status">Creating session…</p>
         <a id="qr" target="_blank"></a>
     </div>
     <canvas id="game" class="hidden" width="640" height="400"></canvas>
@@ -57,9 +57,9 @@ qr.addData(display.url);
 qr.make();
 qrLink.innerHTML = qr.createSvgTag({ scalable: true });
 qrLink.href = display.url;
-status.textContent = "Scanne ce QR code avec ton téléphone";
+status.textContent = "Scan this QR code with your phone";
 
-// Mini-jeu : un carré déplacé avec la croix, A change sa couleur
+// Mini-game: move a square with the D-pad, A changes its color, B boosts
 const keys = new Set();
 const player = { x: 300, y: 180, size: 40, color: "#C9211E" };
 const colors = ["#C9211E", "#2E86DE", "#10AC84", "#F6B93B"];
@@ -85,7 +85,7 @@ display.on("message", ({ name, state }) => {
 });
 
 display.on("close", () => {
-    status.textContent = "Manette déconnectée. Recharge la page pour rejouer.";
+    status.textContent = "Controller disconnected. Reload the page to play again.";
     canvas.classList.add("hidden");
     document.getElementById("pairing").classList.remove("hidden");
     qrLink.classList.add("hidden");

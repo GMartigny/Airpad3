@@ -1,7 +1,7 @@
 /**
- * Signalisation via ntfy (https://ntfy.sh) : un simple pub/sub HTTP public,
- * sans compte et sans serveur à héberger.
- * Chaque session utilise son propre topic, nommé à partir d'un ID aléatoire.
+ * Signaling through ntfy (https://ntfy.sh): a simple public HTTP pub/sub,
+ * with no account and no server to host.
+ * Each session uses its own topic, named after a random ID.
  */
 
 export const DEFAULT_SERVER = "https://ntfy.sh";
@@ -22,22 +22,22 @@ function parse (text) {
 /**
  * @param {string} topic -
  * @param {Object} [options] -
- * @param {string} [options.server] - URL du serveur ntfy
+ * @param {string} [options.server] - ntfy server URL
  * @return {{publish: Function, last: Function, wait: Function}}
  */
 export function createSignaling (topic, { server = DEFAULT_SERVER } = {}) {
     const base = `${server}/${topic}`;
 
     /**
-     * Lit le dernier message déjà publié d'un type donné.
+     * Read the last already published message of a given type.
      * @param {string} type -
-     * @param {string} [since="all"] - ID ntfy à partir duquel lire
+     * @param {string} [since="all"] - ntfy message ID to read from
      * @return {Promise<Object|undefined>}
      */
     async function poll (type, since = "all") {
         const response = await fetch(`${base}/json?poll=1&since=${since}`);
         if (!response.ok) {
-            throw new Error(`Airpad: échec de lecture sur ntfy (${response.status})`);
+            throw new Error(`Airpad: failed to read from ntfy (${response.status})`);
         }
         const text = await response.text();
         return text.split("\n")
@@ -51,9 +51,9 @@ export function createSignaling (topic, { server = DEFAULT_SERVER } = {}) {
 
     return {
         /**
-         * Publie un message sur le topic.
+         * Publish a message on the topic.
          * @param {Object} payload -
-         * @return {Promise<{id: string}>} le message créé par ntfy
+         * @return {Promise<{id: string}>} the message created by ntfy
          */
         async publish (payload) {
             const response = await fetch(base, {
@@ -61,13 +61,13 @@ export function createSignaling (topic, { server = DEFAULT_SERVER } = {}) {
                 body: JSON.stringify(payload),
             });
             if (!response.ok) {
-                throw new Error(`Airpad: échec de publication sur ntfy (${response.status})`);
+                throw new Error(`Airpad: failed to publish on ntfy (${response.status})`);
             }
             return response.json();
         },
 
         /**
-         * Lit le dernier message déjà publié d'un type donné.
+         * Read the last already published message of a given type.
          * @param {string} type -
          * @return {Promise<Object|undefined>}
          */
@@ -76,13 +76,13 @@ export function createSignaling (topic, { server = DEFAULT_SERVER } = {}) {
         },
 
         /**
-         * Attend le prochain message d'un type donné.
-         * Écoute en SSE, avec un polling de secours (SSE coupé, proxy qui bufferise…).
+         * Wait for the next message of a given type.
+         * Listen with SSE, with a polling fallback (dropped SSE, buffering proxy…).
          * @param {string} type -
          * @param {Object} [options] -
-         * @param {string} [options.since="all"] - ID ntfy à partir duquel écouter
-         * @param {number} [options.timeout] - en millisecondes
-         * @param {number} [options.pollInterval=2000] - en millisecondes
+         * @param {string} [options.since="all"] - ntfy message ID to listen from
+         * @param {number} [options.timeout] - in milliseconds
+         * @param {number} [options.pollInterval=2000] - in milliseconds
          * @return {Promise<Object>}
          */
         wait (type, { since = "all", timeout = 5 * 60 * 1000, pollInterval = 2000 } = {}) {
@@ -94,7 +94,7 @@ export function createSignaling (topic, { server = DEFAULT_SERVER } = {}) {
                     source.close();
                     callback(value);
                 };
-                const timer = setTimeout(() => finish(reject, new Error("Airpad: délai d'attente dépassé")), timeout);
+                const timer = setTimeout(() => finish(reject, new Error("Airpad: timed out")), timeout);
                 const interval = setInterval(async () => {
                     try {
                         const payload = await poll(type, since);
@@ -103,7 +103,7 @@ export function createSignaling (topic, { server = DEFAULT_SERVER } = {}) {
                         }
                     }
                     catch {
-                        // Réseau instable : on retentera au prochain tour
+                        // Unstable network: retry on next tick
                     }
                 }, pollInterval);
 
