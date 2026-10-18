@@ -38,6 +38,22 @@ session.send(new CustomEvent("gameover")); // every connected controller
 - `session.send(event)` reaches every connected controller, `controller.send(event)` a single one.
 - A controller keeps its `number` (from 1) for the whole session, even after a disconnection.
 
+### Kicking a controller
+
+```js
+controller.kick(); // or session.kick(controller)
+```
+
+The controller is disconnected, and its automatic reconnections are refused (resuming the last session, reconnect button, page reload…). Scanning the QR code again lets it back in, with the same number.
+
+On the phone, `Events.DISCONNECT` tells why in `event.detail.reason`, one of `DisconnectReasons`:
+
+| Reason | |
+| --- | --- |
+| `CLOSED` | `close()` was called on this side |
+| `LOST` | The connection dropped, or the other side closed it |
+| `KICKED` | The display kicked this controller |
+
 ### Controller page
 
 `host()` points the QR code to `controller.html`, next to the display page (change it with `controllerUrl`). Serving it only takes:
@@ -54,7 +70,9 @@ session.send(new CustomEvent("gameover")); // every connected controller
 
 - it shows the player number given by the display
 - it remembers the last session: opening the page without `#id` resumes it, so a lost URL isn't a problem
+- it removes the ID from the URL once read: reloading the page resumes, only a QR code scan counts as a new join
 - when disconnected, it shows a reconnect button, and reconnects by itself when the page becomes visible again (unlocked phone)
+- when kicked, it asks to scan the QR code again
 
 The default controller has a floating stick on the left half (it starts where the finger lands and moves relative to it) and two buttons stacked on the right half, each one a quarter of the screen, `A` on top and `B` below (or a single button filling the right half). It sends `STICK_MOVE`, `BUTTON_DOWN` and `BUTTON_UP` by itself, along with the automatic `ROTATE`, `LOCK` and `UNLOCK`, and goes fullscreen on first touch.
 
@@ -96,7 +114,7 @@ All types are available as constants on `Events`.
 | `ROTATE` | `RotateEvent` (`orientation`) | phone → computer | Switched between `"portrait"` and `"landscape"`. **Sent automatically**, and once on connection |
 | `LOCK`, `UNLOCK` | `LockEvent` (`locked`) | phone → computer | Screen locked or unlocked (page hidden or visible). **Sent automatically** |
 | `VIBRATE` | `VibrateEvent` (`pattern`) | computer → phone | Vibrates the phone by default, cancel with `preventDefault()` |
-| `CONNECT`, `DISCONNECT`, `ERROR` | `CustomEvent` | local | Connection lifecycle, the error is in `event.detail`. On the session, they come with `event.controller`. Can't be sent |
+| `CONNECT`, `DISCONNECT`, `ERROR` | `CustomEvent` | local | Connection lifecycle: `event.detail.reason` for `DISCONNECT`, the error in `event.detail` for `ERROR`. On the session, they come with `event.controller`. Can't be sent |
 
 Automatic events can be turned off with `join(id, { deviceEvents: false })`.
 
@@ -133,6 +151,7 @@ pad.send(new JumpEvent("jump", { height: 3 }));
 | `session.controllers` | Every `Peer` that joined, connected or not, by number |
 | `session.send(event)` | Dispatch an event on every connected controller. Returns `false` when none got it |
 | `session.close()` | End the session, disconnecting every controller |
+| `controller.kick()` | Disconnect a controller, it can only come back by scanning the QR code (computer side) |
 | `join(id, options)` | Join a session (phone side). Resolves with a connected `Peer` |
 | `peer.number` | Player number, from 1 |
 | `peer.send(event)` | Dispatch an event on the other side. Returns `false` (and sends nothing) when not connected |
@@ -150,6 +169,7 @@ pad.send(new JumpEvent("jump", { height: 3 }));
 | `iceServers` | Google STUN | STUN/TURN servers |
 | `timeout` | 15 s | Max pairing delay (`join` only) |
 | `player` | remembered on the device | Player ID, to get the same number back when reconnecting (`join` only) |
+| `resume` | `false` | Automatic reconnection rather than a QR code scan, refused for a kicked player (`join` only). On refusal, the error has `reason: "kicked"` |
 | `controllerUrl` | `"controller.html"` | Controller page URL, resolved against the current page (`host` only). `HOSTED_CONTROLLER_URL` points to a ready-made one, for quick tests |
 | `deviceEvents` | `true` | Send `ROTATE`, `LOCK` and `UNLOCK` automatically (`join` only) |
 

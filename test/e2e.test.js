@@ -70,6 +70,7 @@ const {
     join,
     Events,
     Session,
+    DisconnectReasons,
     AirpadEvent,
     ButtonEvent,
     StickEvent,
@@ -134,15 +135,17 @@ const withTimeout = (promise, timeout) => Promise.race([
  * The session survives failed attempts, which is also what this checks.
  * @param {Session} session -
  * @param {string} player -
+ * @param {Object} [extra] - more join() options
  * @return {Promise<Peer>} the phone side
  */
-async function connect (session, player) {
+async function connect (session, player, extra = {}) {
     for (let attempt = 1; ; attempt++) {
         const connected = next(session, Events.CONNECT, event => session.controllers
             .find(controller => controller === event.controller && controller.isConnected));
         try {
             const pad = await join(session.id, {
                 ...options,
+                ...extra,
                 player,
             });
             await withTimeout(connected, 5000);
@@ -307,13 +310,19 @@ await assert.rejects(join("unknown", {
 
 // --- A player leaves and comes back with the same number
 let disconnected = next(session, Events.DISCONNECT);
+const pad1Closed = next(pad1, Events.DISCONNECT);
 pad1.close();
-assert.equal((await disconnected).controller, p1);
+assert.equal((await pad1Closed).detail.reason, DisconnectReasons.CLOSED);
+event = await disconnected;
+assert.equal(event.controller, p1);
+assert.equal(event.detail.reason, DisconnectReasons.LOST);
 assert.equal(p1.isConnected, false);
 assert.ok(p2.isConnected, "other players are not affected");
 assert.equal(session.controllers.length, 2, "a player keeps its place");
 
-const pad1Again = await connect(session, "player-one");
+const pad1Again = await connect(session, "player-one", {
+    resume: true,
+});
 assert.equal(pad1Again.number, 1);
 assert.ok(p1.isConnected);
 assert.equal(session.controllers.length, 2);
@@ -329,8 +338,38 @@ assert.ok(pad1Tab.isConnected && p1.isConnected && p2.isConnected);
 const pad3 = await connect(session, "player-three");
 assert.equal(pad3.number, 3);
 
+// --- Kicked: disconnected, automatic reconnections refused, a QR code scan is accepted
+const [, , p3] = session.controllers;
+const pad3Kicked = next(pad3, Events.DISCONNECT);
+disconnected = next(session, Events.DISCONNECT);
+p3.kick();
+event = await disconnected;
+assert.equal(event.controller, p3);
+assert.equal(event.detail.reason, DisconnectReasons.KICKED);
+assert.equal((await withTimeout(pad3Kicked, 5000)).detail.reason, DisconnectReasons.KICKED, "the phone knows it was kicked");
+assert.ok(p1.isConnected && p2.isConnected, "other players are not affected");
+
+const refused = await join(session.id, {
+    ...options,
+    player: "player-three",
+    resume: true,
+}).catch(error => error);
+assert.match(refused.message, /kicked/);
+assert.equal(refused.reason, DisconnectReasons.KICKED);
+
+const pad3Scanned = await connect(session, "player-three");
+assert.equal(pad3Scanned.number, 3, "a scan lifts the kick, same number");
+assert.ok(p3.isConnected);
+
+// Resuming is still fine for players who weren't kicked
+const pad3Resumed = await connect(session, "player-three", {
+    resume: true,
+});
+assert.equal(pad3Resumed.number, 3);
+assert.throws(() => session.kick(new EventTarget()), /isn't part of the session/);
+
 // --- Closing the session disconnects everyone, nobody can join anymore
-const allClosed = Promise.all([pad1Tab, pad2, pad3].map(pad => withTimeout(next(pad, Events.DISCONNECT), 5000)));
+const allClosed = Promise.all([pad1Tab, pad2, pad3Resumed].map(pad => withTimeout(next(pad, Events.DISCONNECT), 5000)));
 session.close();
 await allClosed;
 assert.ok(session.isClosed);
@@ -357,5 +396,5 @@ resilient.close();
 
 ntfy.closeAllConnections();
 ntfy.close();
-console.log("✓ multi-controllers: numbers, relayed events, broadcast and targeted sends, comeback, second tab, session end, device events, default actions, custom events");
+console.log("✓ multi-controllers: numbers, relayed events, broadcast and targeted sends, comeback, second tab, kick, session end, device events, default actions, custom events");
 process.exit(0);

@@ -138,6 +138,7 @@ const navigate = (url) => {
     Object.assign(globalThis, {
         document: dom.window.document,
         location: dom.window.location,
+        history: dom.window.history,
         localStorage: dom.window.localStorage,
     });
     return dom;
@@ -151,9 +152,14 @@ const tick = () => new Promise(resolve => setTimeout(resolve, 10));
  */
 const joins = [];
 const fakeJoin = async (id, options) => {
-    joins.push([id, options.server]);
+    joins.push([id, options.server, options.resume]);
     if (id === "over") {
         throw new Error("Airpad: session not found");
+    }
+    if (id === "kicked") {
+        throw Object.assign(new Error("Airpad: kicked from this session"), {
+            reason: "kicked",
+        });
     }
     const fake = new EventTarget();
     fake.number = joins.length;
@@ -172,8 +178,10 @@ let mounted = mountController({
     fullscreen: false,
 });
 await tick();
-assert.deepEqual(joins.at(-1), ["abc", "https://ntfy.test"]);
+assert.deepEqual(joins.at(-1), ["abc", "https://ntfy.test", false], "a scan isn't a resume");
 assert.equal(localStorage.getItem("airpad:session"), "abc");
+assert.equal(location.hash, "", "the ID is removed from the URL, a reload counts as resuming");
+assert.equal(location.search, "?server=https://ntfy.test");
 assert.ok(!statusShown());
 assert.equal(document.querySelectorAll(".airpad-controller").length, 1);
 assert.equal(document.querySelector(".airpad-player").textContent, "Player 1", "shows the player number");
@@ -187,9 +195,24 @@ assert.equal(statusText(), "Disconnected");
 document.querySelector(".airpad-status button").click();
 await tick();
 assert.equal(joins.length, 2);
+assert.equal(joins.at(-1)[2], true, "the reconnect button resumes");
 assert.notEqual(mounted.peer, firstPeer);
 assert.ok(!statusShown());
 assert.equal(document.querySelectorAll(".airpad-controller").length, 1);
+
+// Kicked by the display: no reconnect button, no automatic reconnection, session forgotten
+mounted.peer.isConnected = false;
+mounted.peer.dispatchEvent(new CustomEvent(Events.DISCONNECT, {
+    detail: {
+        reason: "kicked",
+    },
+}));
+assert.match(statusText(), /removed from the game/);
+assert.ok(document.querySelector(".airpad-status button").hidden);
+assert.equal(localStorage.getItem("airpad:session"), null);
+document.dispatchEvent(new dom.window.Event("visibilitychange"));
+await mounted.reconnect();
+assert.equal(joins.length, 2, "never reconnects by itself once kicked");
 mounted.destroy();
 
 // No ID in the URL: resumes the last session
@@ -202,8 +225,19 @@ mounted = mountController({
 });
 assert.equal(statusText(), "Resuming last session…");
 await tick();
-assert.equal(joins.at(-1)[0], "abc");
+assert.deepEqual(joins.at(-1).slice(0, 1).concat(joins.at(-1)[2]), ["abc", true], "resumes the stored session");
 assert.ok(!statusShown());
+mounted.destroy();
+
+// Resuming after being kicked is refused: asks to scan again
+dom.window.localStorage.setItem("airpad:session", "kicked");
+mounted = mountController({
+    join: fakeJoin,
+    fullscreen: false,
+});
+await tick();
+assert.match(statusText(), /removed from the game/);
+assert.equal(dom.window.localStorage.getItem("airpad:session"), null);
 mounted.destroy();
 
 // Last session is over: forgets it and asks to scan again
@@ -223,9 +257,9 @@ mounted = mountController({
     fullscreen: false,
 });
 assert.equal(statusText(), "Scan the QR code shown on the screen");
-assert.equal(joins.length, 4);
+assert.equal(joins.length, 5);
 mounted.destroy();
 assert.ok(stored);
 
-console.log("✓ controller: layout, relative stick, clamping, throttling, release, multi-touch buttons, mountController (URL ID, resume, session over, reconnect)");
+console.log("✓ controller: layout, relative stick, clamping, throttling, release, multi-touch buttons, mountController (URL ID, resume, session over, reconnect, kick)");
 process.exit(0);

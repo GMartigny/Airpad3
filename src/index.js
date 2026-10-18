@@ -60,6 +60,34 @@ const ATTACH = Symbol("attach");
 const RELAY = Symbol("relay");
 
 /**
+ * Internal method to kick a controller
+ * @type {symbol}
+ */
+const KICK = Symbol("kick");
+
+/**
+ * Why a peer got disconnected, in `event.detail.reason` of `Events.DISCONNECT`
+ * @readonly
+ * @enum {string}
+ */
+export const DisconnectReasons = Object.freeze({
+    // close() was called on this side
+    CLOSED: "closed",
+    // The connection dropped, or the other side closed it
+    LOST: "lost",
+    // The display kicked this controller: it can only join again by scanning the QR code
+    KICKED: "kicked",
+});
+
+/**
+ * Internal messages between peers, not dispatched as events
+ * @type {string}
+ */
+const KICK_MESSAGE = JSON.stringify({
+    control: "kick",
+});
+
+/**
  * @typedef {Object} AirpadOptions
  * @property {string} [server="https://ntfy.sh"] - ntfy server used for pairing
  * @property {RTCIceServer[]} [iceServers] - STUN/TURN servers
@@ -178,7 +206,7 @@ function fromController (event, controller) {
  * rebuilt with the same class, type and `detail`.
  *
  * Lifecycle events, dispatched locally: `Events.CONNECT`, `Events.DISCONNECT`
- * and `Events.ERROR` (the error is in `event.detail`).
+ * (with `event.detail.reason`, see `DisconnectReasons`) and `Events.ERROR` (the error is in `event.detail`).
  * A peer can connect again after a disconnection (same player coming back).
  */
 export class Peer extends EventTarget {
@@ -241,10 +269,25 @@ export class Peer extends EventTarget {
 
     /**
      * Close the connection. On the computer, this disconnects the controller,
-     * which can still come back later.
+     * which can still come back later (see `kick()` to prevent it).
      */
     close () {
-        this.#detach();
+        this.#detach(DisconnectReasons.CLOSED);
+    }
+
+    /**
+     * Tell the other side it's kicked, then close the connection.
+     */
+    [KICK] () {
+        if (this.isConnected) {
+            try {
+                this.#channel.send(KICK_MESSAGE);
+            }
+            catch {
+                // Closing anyway
+            }
+        }
+        this.#detach(DisconnectReasons.KICKED);
     }
 
     /**
@@ -273,7 +316,9 @@ export class Peer extends EventTarget {
             state = "closed";
             this.#connected = false;
             if (wasConnected) {
-                this.#dispatch(Events.DISCONNECT);
+                this.#dispatch(Events.DISCONNECT, {
+                    reason: DisconnectReasons.LOST,
+                });
             }
             else {
                 fail(new Error("Airpad: WebRTC connection failed"));
@@ -327,19 +372,25 @@ export class Peer extends EventTarget {
 
     /**
      * Close the current connection, if any.
+     * @param {string} [reason] - from `DisconnectReasons`
      */
-    #detach () {
+    #detach (reason = DisconnectReasons.CLOSED) {
         const connection = this.#connection;
         if (!connection) {
             return;
         }
+        const channel = this.#channel;
         const wasConnected = this.#connected;
         this.#connected = false;
         this.#connection = undefined;
         this.#channel = undefined;
-        connection.close();
+        // Let queued messages (like a kick) go out before closing the connection
+        channel?.close();
+        setTimeout(() => connection.close(), channel ? 200 : 0);
         if (wasConnected) {
-            this.#dispatch(Events.DISCONNECT);
+            this.#dispatch(Events.DISCONNECT, {
+                reason,
+            });
         }
     }
 
@@ -353,6 +404,10 @@ export class Peer extends EventTarget {
         }
         catch (error) {
             this.#dispatch(Events.ERROR, error);
+            return;
+        }
+        if (message?.control === "kick") {
+            this.#detach(DisconnectReasons.KICKED);
             return;
         }
         if (typeof message?.type !== "string" || !message.type || RESERVED_EVENTS.has(message.type)) {
@@ -402,6 +457,7 @@ export class Session extends EventTarget {
     url;
 
     #controllers = new Map();
+    #kicked = new Set();
     #closed = false;
     #dispose;
 
@@ -446,6 +502,35 @@ export class Session extends EventTarget {
     }
 
     /**
+     * Disconnect a controller and refuse its automatic reconnections:
+     * it can only join again by scanning the QR code.
+     * Same as `controller.kick()`.
+     * @param {Peer} controller -
+     */
+    kick (controller) {
+        const player = [...this.#controllers].find(([, peer]) => peer === controller)?.[0];
+        if (player === undefined) {
+            throw new Error("Airpad: this controller isn't part of the session");
+        }
+        this.#kicked.add(player);
+        controller[KICK]();
+    }
+
+    /**
+     * Whether a player was kicked and can't resume automatically.
+     * A fresh scan of the QR code lifts it.
+     * @param {string} player -
+     * @param {boolean} resume - automatic reconnection, not a scan
+     * @return {boolean} whether this hello is refused
+     */
+    [KICK] (player, resume) {
+        if (!resume) {
+            this.#kicked.delete(player);
+        }
+        return this.#kicked.has(player);
+    }
+
+    /**
      * End the session: disconnects every controller, and none can join anymore.
      */
     close () {
@@ -467,6 +552,7 @@ export class Session extends EventTarget {
         if (!controller) {
             controller = new Peer();
             controller.number = number;
+            controller.kick = () => this.kick(controller);
             controller[RELAY] = (type, detail, remote) => {
                 const event = remote ? reviveEvent(type, detail) : new CustomEvent(type, {
                     detail,
@@ -556,6 +642,14 @@ export async function host (options = {}) {
             if (message.type === "hello") {
                 // A player keeps its number for the whole session
                 const player = String(message.player || message.nonce);
+                if (session[KICK](player, Boolean(message.resume))) {
+                    await signaling.publish({
+                        type: "refused",
+                        nonce: message.nonce,
+                        reason: DisconnectReasons.KICKED,
+                    });
+                    return;
+                }
                 if (!numbers.has(player)) {
                     numbers.set(player, numbers.size + 1);
                 }
@@ -619,6 +713,7 @@ export async function host (options = {}) {
  * @param {AirpadOptions & {timeout?: number, player?: string, deviceEvents?: boolean}} [options] -
  * `timeout` (default 15s) max pairing delay,
  * `player` player ID, to get the same number back when reconnecting (default: remembered on this device),
+ * `resume` (default `false`) automatic reconnection, refused for a kicked player (a fresh QR code scan isn't),
  * `deviceEvents` (default `true`) sends `Events.ROTATE`, `Events.LOCK` and `Events.UNLOCK` automatically
  * @return {Promise<Peer>}
  */
@@ -628,6 +723,7 @@ export async function join (id, options = {}) {
         iceServers = DEFAULT_ICE_SERVERS,
         timeout = 15 * 1000,
         player = devicePlayerId(),
+        resume = false,
         deviceEvents = true,
     } = options;
 
@@ -643,16 +739,22 @@ export async function join (id, options = {}) {
         type: "hello",
         nonce,
         player,
+        resume,
     });
     let offer;
     try {
-        offer = await signaling.wait(message => message.type === "offer" && message.nonce === nonce, {
+        offer = await signaling.wait(message => ["offer", "refused"].includes(message.type) && message.nonce === nonce, {
             since: hello.id,
             timeout: remaining(),
         });
     }
     catch {
         throw new Error("Airpad: session not found");
+    }
+    if (offer.type === "refused") {
+        const error = new Error("Airpad: kicked from this session, scan the QR code to join again");
+        error.reason = offer.reason;
+        throw error;
     }
 
     const connection = new RTCPeerConnection({

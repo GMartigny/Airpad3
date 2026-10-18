@@ -397,20 +397,40 @@ export function mountController (options = {}) {
     };
     let controller;
 
-    const id = globalThis.location?.hash.slice(1) || readStorage(storage, storageKey);
-    const fromStorage = !globalThis.location?.hash.slice(1);
+    const scanned = globalThis.location?.hash.slice(1);
+    const id = scanned || readStorage(storage, storageKey);
+    if (scanned) {
+        // Only a QR code scan carries the ID: reloading the page then counts as resuming
+        try {
+            globalThis.history?.replaceState(null, "", `${location.pathname}${location.search}`);
+        }
+        catch {
+            // History not available: a reload will count as a new scan
+        }
+    }
     let connecting = false;
+    let kicked = false;
 
-    const connect = async () => {
-        if (connecting || peer?.isConnected) {
+    const onKicked = () => {
+        kicked = true;
+        writeStorage(storage, storageKey);
+        show("You were removed from the game. Scan the QR code to join again.");
+    };
+
+    /**
+     * @param {boolean} resume - automatic reconnection, not a QR code scan
+     */
+    const connect = async (resume) => {
+        if (connecting || kicked || peer?.isConnected) {
             return;
         }
         connecting = true;
-        show(fromStorage ? "Resuming last session…" : "Connecting…");
+        show(resume ? "Resuming last session…" : "Connecting…");
         try {
             peer = await (joinSession ?? join)(id, {
                 ...joinOptions,
                 server,
+                resume,
             });
             writeStorage(storage, storageKey, id);
             status.hidden = true;
@@ -421,13 +441,23 @@ export function mountController (options = {}) {
             // Player number given by the display
             badge.textContent = `Player ${peer.number}`;
             badge.hidden = peer.number === undefined;
-            peer.addEventListener(Events.DISCONNECT, () => show("Disconnected", true), {
+            peer.addEventListener(Events.DISCONNECT, ({ detail }) => {
+                if (detail?.reason === "kicked") {
+                    onKicked();
+                }
+                else {
+                    show("Disconnected", true);
+                }
+            }, {
                 once: true,
             });
             onConnect?.(peer);
         }
         catch (error) {
-            if (fromStorage) {
+            if (error.reason === "kicked") {
+                onKicked();
+            }
+            else if (resume) {
                 writeStorage(storage, storageKey);
                 show("Last session is over, scan the QR code on the screen");
             }
@@ -440,18 +470,18 @@ export function mountController (options = {}) {
         }
     };
 
-    action.addEventListener("click", connect);
+    action.addEventListener("click", () => connect(true));
 
     // Coming back to the page (unlocked phone…): reconnect by itself
     const onVisible = () => {
         if (document.visibilityState === "visible" && controller && !peer?.isConnected) {
-            connect();
+            connect(true);
         }
     };
     document.addEventListener("visibilitychange", onVisible);
 
     if (id) {
-        connect();
+        connect(!scanned);
     }
     else {
         show("Scan the QR code shown on the screen");
@@ -461,7 +491,7 @@ export function mountController (options = {}) {
         get peer () {
             return peer;
         },
-        reconnect: connect,
+        reconnect: () => connect(true),
         destroy () {
             document.removeEventListener("visibilitychange", onVisible);
             peer?.close();
