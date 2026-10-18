@@ -57,7 +57,7 @@ pad.send(new ButtonEvent(Events.BUTTON_DOWN, { button: "A" }));
 - it remembers the last session: opening the page without `#id` resumes it, so a lost URL isn't a problem
 - when disconnected, it shows a reconnect button, and reconnects by itself when the page becomes visible again (unlocked phone)
 
-The default controller has a floating stick on the left half (it starts where the finger lands and moves relative to it) and two buttons stacked on the right half, each one a quarter of the screen, `A` on top and `B` below. It sends `STICK_MOVE`, `BUTTON_DOWN` and `BUTTON_UP` by itself, along with the automatic `ROTATE`, `LOCK` and `UNLOCK`, and goes fullscreen on first touch.
+The default controller has a floating stick on the left half (it starts where the finger lands and moves relative to it) and two buttons stacked on the right half, each one a quarter of the screen, `A` on top and `B` below (or a single button filling the right half). It sends `STICK_MOVE`, `BUTTON_DOWN` and `BUTTON_UP` by itself, along with the automatic `ROTATE`, `LOCK` and `UNLOCK`, and goes fullscreen on first touch.
 
 | `mountController` option | Default | Description |
 | --- | --- | --- |
@@ -78,7 +78,7 @@ createController(pad, { buttons: ["Jump", "Fire"] });
 | `createController` option | Default | Description |
 | --- | --- | --- |
 | `element` | `document.body` | Where to mount the controller |
-| `buttons` | `["A", "B"]` | Button names, top to bottom |
+| `buttons` | `["A", "B"]` | One or two button names, top to bottom |
 | `stickRadius` | `0.15` | Stick radius, relative to the smallest screen side |
 | `fullscreen` | `true` | Go fullscreen on first touch |
 
@@ -127,7 +127,7 @@ pad.send(new JumpEvent("jump", { height: 3 }));
 | --- | --- |
 | `host(options)` | Create a session (computer side). Resolves with a `Peer` having `id` and `url`, `OPEN` and `CLOSE` fire each time a controller connects or leaves |
 | `join(id, options)` | Join a session (phone side). Resolves with an open `Peer` |
-| `peer.send(event)` | Dispatch an event on the remote peer |
+| `peer.send(event)` | Dispatch an event on the remote peer. Returns `false` (and sends nothing) when not connected |
 | `peer.addEventListener(type, listener)` | Listen to remote or lifecycle events |
 | `peer.isOpen` | Whether the connection is open |
 | `peer.ready` | Promise resolved when the connection opens, rejected if it fails before |

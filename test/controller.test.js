@@ -20,7 +20,8 @@ const { createController, Events, ButtonEvent, StickEvent } = await import("../s
 const sent = [];
 const peer = {
     isOpen: true,
-    send: event => sent.push(event),
+    // Like Peer.send(): nothing is sent when the connection isn't open
+    send: event => peer.isOpen && Boolean(sent.push(event)),
 };
 
 const { element, destroy } = createController(peer, {
@@ -107,6 +108,21 @@ const custom = createController(peer, {
     fullscreen: false,
 });
 assert.deepEqual([...custom.element.querySelectorAll("button")].map(button => button.textContent), ["Jump", "Fire"]);
+
+// One or two buttons, never an empty zone
+const single = createController(peer, {
+    buttons: ["Go"],
+    fullscreen: false,
+});
+assert.deepEqual([...single.element.querySelectorAll("button")].map(button => button.textContent), ["Go"]);
+assert.match(single.element.querySelector("style").textContent, /\.airpad-button:only-of-type\s*\{\s*grid-row: 1 \/ 3;/);
+single.destroy();
+assert.throws(() => createController(peer, {
+    buttons: [],
+}), /one or two/);
+assert.throws(() => createController(peer, {
+    buttons: ["A", "B", "C"],
+}), /one or two/);
 
 // --- mountController: session ID from the URL or from the last session
 const { mountController } = await import("../src/index.js");

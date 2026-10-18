@@ -62,6 +62,9 @@ const STYLE = `
     color: #ffffffd0;
     background: #c9211e;
 }
+.airpad-button:only-of-type {
+    grid-row: 1 / 3;
+}
 .airpad-button + .airpad-button {
     border-top: 2px solid #1e1e1e;
     background: #2e86de;
@@ -89,12 +92,12 @@ const round = value => Math.round(value * 1000) / 1000;
 
 /**
  * Default controller: a floating stick on the left half,
- * two buttons stacked on the right half (each one a quarter of the screen).
+ * two buttons stacked on the right half (each one a quarter of the screen), or a single one filling it.
  * Sends `Events.STICK_MOVE`, `Events.BUTTON_DOWN` and `Events.BUTTON_UP` on the peer.
  * @param {import("./index.js").Peer} peer - connected peer, from `join()`
  * @param {Object} [options] -
  * @param {HTMLElement} [options.element=document.body] - where to mount the controller
- * @param {[string, string]} [options.buttons=["A", "B"]] - button names, top to bottom
+ * @param {string[]} [options.buttons=["A", "B"]] - one or two button names, top to bottom
  * @param {number} [options.stickRadius=0.15] - stick radius, relative to the smallest screen side
  * @param {boolean} [options.fullscreen=true] - go fullscreen on first touch
  * @return {{element: HTMLElement, destroy: Function}}
@@ -107,11 +110,11 @@ export function createController (peer, options = {}) {
         fullscreen = true,
     } = options;
 
-    const send = (event) => {
-        if (peer.isOpen) {
-            peer.send(event);
-        }
-    };
+    if (!Array.isArray(buttons) || buttons.length < 1 || buttons.length > 2) {
+        throw new TypeError("Airpad: the default controller needs one or two button names");
+    }
+
+    const send = event => peer.send(event);
 
     const root = div("airpad-controller");
     const style = document.createElement("style");
@@ -215,7 +218,7 @@ export function createController (peer, options = {}) {
     ["pointerup", "pointercancel", "lostpointercapture"].forEach(type => zone.addEventListener(type, release));
 
     // --- Buttons: each one a quarter of the screen, no empty zone
-    buttons.slice(0, 2).forEach((name) => {
+    buttons.forEach((name) => {
         const button = document.createElement("button");
         button.className = "airpad-button";
         button.textContent = name;
@@ -372,7 +375,7 @@ export function mountController (options = {}) {
         get isOpen () {
             return Boolean(peer?.isOpen);
         },
-        send: event => peer?.send(event),
+        send: event => Boolean(peer?.send(event)),
     };
     let controller;
 

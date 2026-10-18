@@ -229,6 +229,14 @@ export function registerEvent (type, EventClass) {
  * @return {AirpadEvent}
  */
 export function reviveEvent (type, detail) {
-    const EventClass = registry.get(type) ?? AirpadEvent;
+    const EventClass = registry.get(type);
+    if (!EventClass) {
+        // Unknown type: keep the detail as is, null included
+        const event = new AirpadEvent(type);
+        Object.defineProperty(event, "detail", {
+            value: detail ?? null,
+        });
+        return event;
+    }
     return new EventClass(type, detail ?? undefined);
 }

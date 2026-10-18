@@ -146,9 +146,11 @@ export class Peer extends EventTarget {
 
     /**
      * Dispatch an event on the remote peer.
+     * Does nothing when the connection isn't open (no controller connected…).
      * @example peer.send(new ButtonEvent(Events.BUTTON_DOWN, { button: "A" }))
      * @example peer.send(new CustomEvent("score", { detail: 42 }))
      * @param {Event} event - any event, its `detail` must be JSON-serializable
+     * @return {boolean} whether the event was sent
      */
     send (event) {
         if (!(event instanceof Event)) {
@@ -158,12 +160,13 @@ export class Peer extends EventTarget {
             throw new Error(`Airpad: "${event.type}" is a reserved event type`);
         }
         if (!this.isOpen) {
-            throw new Error("Airpad: connection is not open");
+            return false;
         }
         this.#channel.send(JSON.stringify({
             type: event.type,
             detail: event.detail,
         }));
+        return true;
     }
 
     /**
@@ -309,6 +312,24 @@ export class Peer extends EventTarget {
 }
 
 /**
+ * @param {string} controllerUrl - absolute, or relative to the current page
+ * @param {string} id -
+ * @param {string} [server] -
+ * @return {string}
+ */
+function buildControllerUrl (controllerUrl, id, server) {
+    const base = globalThis.location?.href;
+    // Without a current page (outside a browser), a relative URL is kept relative
+    const placeholder = "relative://airpad/";
+    const url = new URL(controllerUrl, base ?? placeholder);
+    if (server) {
+        url.searchParams.set("server", server);
+    }
+    url.hash = id;
+    return url.toString().replace(placeholder, "");
+}
+
+/**
  * Display side (computer): create a session and wait for controllers.
  * The session stays open until `close()`: a controller can leave and come back
  * (or another one can take its place) with the same ID.
@@ -329,12 +350,7 @@ export async function host (options = {}) {
     });
     const peer = new Peer();
     peer.id = id;
-    const url = new URL(controllerUrl, globalThis.location?.href);
-    if (server) {
-        url.searchParams.set("server", server);
-    }
-    url.hash = id;
-    peer.url = url.toString();
+    peer.url = buildControllerUrl(controllerUrl, id, server);
 
     /**
      * Offers are prepared in advance, so a controller gets one right away
@@ -358,7 +374,16 @@ export async function host (options = {}) {
         detail: error,
     }));
 
-    let next = prepare();
+    /**
+     * Prepare the next offer in the background, a failure is retried when a controller says hello
+     * @return {Promise}
+     */
+    const prepareNext = () => {
+        const promise = prepare();
+        promise.catch(() => {});
+        return promise;
+    };
+    let next = prepareNext();
     let pending;
     let resolveReady;
     peer.ready = new Promise((resolve) => {
@@ -368,13 +393,13 @@ export async function host (options = {}) {
     const onMessage = async (message) => {
         try {
             if (message.type === "hello" && message.nonce) {
-                let offer = await next;
-                // Don't hand out an offer left unused for too long
-                if (Date.now() - offer.createdAt > 60 * 1000) {
-                    offer.connection.close();
+                let offer = await next.catch(() => undefined);
+                // Don't hand out a failed offer, or one left unused for too long
+                if (!offer || Date.now() - offer.createdAt > 60 * 1000) {
+                    offer?.connection.close();
                     offer = await prepare();
                 }
-                next = prepare();
+                next = prepareNext();
                 pending?.connection.close();
                 pending = {
                     ...offer,

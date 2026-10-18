@@ -147,6 +147,7 @@ const display = await host({
     controllerUrl: "https://example.com/remote/",
 });
 const initialRotate = next(display, Events.ROTATE);
+const initialUnlock = next(display, Events.UNLOCK);
 const pad = await connect(display);
 assert.match(display.id, /^[a-z0-9]{16}$/);
 assert.equal(display.url, `https://example.com/remote/?server=${encodeURIComponent(server)}#${display.id}`);
@@ -157,6 +158,11 @@ assert.ok(pad.isOpen && display.isOpen);
 let event = await initialRotate;
 assert.ok(event instanceof RotateEvent);
 assert.equal(event.orientation, "portrait");
+
+// The lock state is sent on connection too (a lock may have dropped the previous connection)
+event = await initialUnlock;
+assert.ok(event instanceof LockEvent);
+assert.equal(event.locked, false);
 
 let received = next(display, Events.ROTATE);
 portraitQuery.matches = false;
@@ -218,6 +224,12 @@ await received;
 await new Promise(resolve => setTimeout(resolve, 20));
 assert.equal(vibrations.length, 1);
 
+// A null detail stays null
+received = next(pad, "reset");
+display.send(new CustomEvent("reset"));
+event = await received;
+assert.equal(event.detail, null);
+
 // A plain CustomEvent works too
 received = next(pad, "score");
 display.send(new CustomEvent("score", {
@@ -257,6 +269,7 @@ let closed = next(display, Events.CLOSE);
 pad.close();
 await closed;
 assert.equal(display.isOpen, false);
+assert.equal(display.send(new CustomEvent("score")), false, "send() without controller does nothing");
 const pad2 = await connect(display);
 assert.ok(display.isOpen && pad2.isOpen);
 
@@ -283,6 +296,21 @@ await assert.rejects(join(display.id, {
     ...options,
     timeout: 1500,
 }), /session not found/);
+
+// A failed offer preparation is retried when a controller says hello
+let failures = 1;
+globalThis.RTCPeerConnection = class extends RTCPeerConnection {
+    constructor (...args) {
+        if (failures-- > 0) {
+            throw new Error("WebRTC unavailable");
+        }
+        super(...args);
+    }
+};
+const resilient = await host(options);
+const pad4 = await connect(resilient);
+assert.ok(resilient.isOpen && pad4.isOpen);
+resilient.close();
 
 ntfy.closeAllConnections();
 ntfy.close();
