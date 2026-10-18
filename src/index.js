@@ -48,6 +48,20 @@ const DEFAULT_ICE_SERVERS = [
 const PENDING_TIMEOUT = 60 * 1000;
 
 /**
+ * Default delay without any message from the other side before the connection is considered lost
+ * @type {number}
+ */
+const HEARTBEAT_TIMEOUT = 10 * 1000;
+
+/**
+ * Heartbeat message, sent several times per timeout
+ * @type {string}
+ */
+const PING = JSON.stringify({
+    control: "ping",
+});
+
+/**
  * Internal method to plug a WebRTC connection into a peer
  * @type {symbol}
  */
@@ -106,6 +120,7 @@ const MAX_PENDING = 10;
  * @typedef {Object} AirpadOptions
  * @property {string} [server="https://ntfy.sh"] - ntfy server used for pairing
  * @property {RTCIceServer[]} [iceServers] - STUN/TURN servers
+ * @property {number} [heartbeatTimeout=10000] - silence, in milliseconds, before a connection is considered lost
  */
 
 /**
@@ -228,6 +243,14 @@ export class Peer extends EventTarget {
     #connection;
     #channel;
     #connected = false;
+    #lastSeen = 0;
+
+    /**
+     * Delay without any message from the other side (pings included) before the connection
+     * is considered lost, in milliseconds
+     * @type {number}
+     */
+    heartbeatTimeout = HEARTBEAT_TIMEOUT;
 
     /**
      * Player number, from 1, given by the display
@@ -338,13 +361,11 @@ export class Peer extends EventTarget {
             }
             const wasConnected = state === "connected";
             state = "closed";
-            this.#connected = false;
             if (wasConnected) {
-                this.#dispatch(Events.DISCONNECT, {
-                    reason: DisconnectReasons.LOST,
-                });
+                this.#detach(DisconnectReasons.LOST);
             }
             else {
+                this.#connected = false;
                 fail(new Error("Airpad: WebRTC connection failed"));
             }
         };
@@ -382,6 +403,7 @@ export class Peer extends EventTarget {
                 }
                 state = "connected";
                 this.#connected = true;
+                this.#startHeartbeat(isCurrent);
                 this.#dispatch(Events.CONNECT);
             },
             (error) => {
@@ -392,6 +414,34 @@ export class Peer extends EventTarget {
         // Failures are reported through the "error" event, avoid unhandled rejections
         result.catch(() => {});
         return result;
+    }
+
+    /**
+     * Ping the other side regularly, and drop the connection when it stays silent too long
+     * (locked phone, lost network, closed computer…), without waiting for WebRTC to notice.
+     * @param {Function} isCurrent - whether the connection being watched is still the current one
+     */
+    #startHeartbeat (isCurrent) {
+        this.#lastSeen = Date.now();
+        const timer = setInterval(() => {
+            if (!isCurrent() || !this.#connected) {
+                clearInterval(timer);
+                return;
+            }
+            if (Date.now() - this.#lastSeen > this.heartbeatTimeout) {
+                clearInterval(timer);
+                this.#detach(DisconnectReasons.LOST);
+                return;
+            }
+            try {
+                this.#channel.send(PING);
+            }
+            catch {
+                // The silence check above will handle it
+            }
+        }, this.heartbeatTimeout / 5);
+        // Don't keep a Node.js process alive just for this
+        timer.unref?.();
     }
 
     /**
@@ -428,6 +478,10 @@ export class Peer extends EventTarget {
         }
         catch (error) {
             this.#dispatch(Events.ERROR, error);
+            return;
+        }
+        this.#lastSeen = Date.now();
+        if (message?.control === "ping") {
             return;
         }
         if (message?.control) {
@@ -480,6 +534,12 @@ export class Session extends EventTarget {
      * @type {string}
      */
     url;
+
+    /**
+     * Heartbeat timeout given to every controller
+     * @type {number}
+     */
+    heartbeatTimeout = HEARTBEAT_TIMEOUT;
 
     #controllers = new Map();
     #numbers = new Map();
@@ -604,6 +664,7 @@ export class Session extends EventTarget {
         if (!controller) {
             controller = new Peer();
             controller.number = number;
+            controller.heartbeatTimeout = this.heartbeatTimeout;
             controller.kick = () => this.kick(controller);
             controller[RELAY] = (type, detail, remote) => {
                 const event = remote ? reviveEvent(type, detail) : new CustomEvent(type, {
@@ -621,8 +682,9 @@ export class Session extends EventTarget {
  * Display side (computer): create a session and wait for controllers.
  * Controllers join by scanning the QR code (`session.url`), as many as needed.
  * The session stays open until `close()`.
- * @param {AirpadOptions & {controllerUrl?: string}} [options] -
- * `controllerUrl` is resolved against the current page (default: "controller.html")
+ * @param {AirpadOptions & {controllerUrl?: string, closeOnPageHide?: boolean}} [options] -
+ * `controllerUrl` is resolved against the current page (default: "controller.html"),
+ * `closeOnPageHide` (default `true`) closes the session when the page is left, so controllers know right away
  * @return {Promise<Session>}
  */
 export async function host (options = {}) {
@@ -630,6 +692,8 @@ export async function host (options = {}) {
         server,
         iceServers = DEFAULT_ICE_SERVERS,
         controllerUrl = DEFAULT_CONTROLLER_URL,
+        heartbeatTimeout = HEARTBEAT_TIMEOUT,
+        closeOnPageHide = true,
     } = options;
 
     const id = randomId();
@@ -674,8 +738,10 @@ export async function host (options = {}) {
     });
 
     const unsubscribe = signaling.subscribe(message => onMessage(message));
+    let pageHideCleanup;
     const session = new Session(id, buildControllerUrl(controllerUrl, id, server), () => {
         unsubscribe();
+        pageHideCleanup?.();
         pending.forEach(({ connection, timer }) => {
             clearTimeout(timer);
             connection.close();
@@ -683,9 +749,17 @@ export async function host (options = {}) {
         pending.clear();
         next.then(({ connection }) => connection.close(), () => {});
     });
+    session.heartbeatTimeout = heartbeatTimeout;
     const reportError = error => session.dispatchEvent(new CustomEvent(Events.ERROR, {
         detail: error,
     }));
+
+    // Leaving the game page ends the session, so controllers know right away (instead of a timeout)
+    if (closeOnPageHide && typeof globalThis.addEventListener === "function") {
+        const onPageHide = () => session.close();
+        globalThis.addEventListener("pagehide", onPageHide);
+        pageHideCleanup = () => globalThis.removeEventListener("pagehide", onPageHide);
+    }
 
     /**
      * @param {Object} message -
@@ -783,7 +857,7 @@ function refusal (reason) {
  * Resolves once connected, with the player number in `peer.number`.
  * @param {string} id - ID read from the QR code
  * @param {AirpadOptions & {timeout?: number, player?: string, deviceEvents?: boolean}} [options] -
- * `timeout` (default 15s) max pairing delay,
+ * `timeout` max pairing delay (default 15s, 10s when resuming),
  * `player` player ID, to get the same number back when reconnecting (default: remembered on this device),
  * `resume` (default `false`) automatic reconnection, refused for a kicked player (a fresh QR code scan isn't),
  * `deviceEvents` (default `true`) sends `Events.ROTATE`, `Events.LOCK` and `Events.UNLOCK` automatically
@@ -793,9 +867,11 @@ export async function join (id, options = {}) {
     const {
         server,
         iceServers = DEFAULT_ICE_SERVERS,
-        timeout = 15 * 1000,
         player = devicePlayerId(),
         resume = false,
+        // A live session answers within a second or two: don't make a resume wait for a gone one
+        timeout = resume ? 10 * 1000 : 15 * 1000,
+        heartbeatTimeout = HEARTBEAT_TIMEOUT,
         deviceEvents = true,
     } = options;
 
@@ -838,6 +914,7 @@ export async function join (id, options = {}) {
     const peer = new Peer();
     peer.id = id;
     peer.number = offer.number;
+    peer.heartbeatTimeout = heartbeatTimeout;
     peer.ready = peer[ATTACH](connection, channelPromise);
 
     try {

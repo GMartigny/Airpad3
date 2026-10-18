@@ -51,9 +51,11 @@ On the phone, `Events.DISCONNECT` tells why in `event.detail.reason`, one of `Di
 | Reason | |
 | --- | --- |
 | `CLOSED` | `close()` was called on this side |
-| `LOST` | The connection dropped, or the other side closed it |
+| `LOST` | The connection dropped, the other side closed it, or stayed silent for 10 s (locked phone, lost network, sleeping computer) |
 | `KICKED` | The display kicked this controller |
-| `ENDED` | The display closed the session |
+| `ENDED` | The display closed the session (`session.close()`, or the game page was left) |
+
+Both sides ping each other regularly: a silent connection is dropped after `heartbeatTimeout` (10 s), without waiting for WebRTC to notice.
 
 ### Controller page
 
@@ -169,7 +171,9 @@ pad.send(new JumpEvent("jump", { height: 3 }));
 | --- | --- | --- |
 | `server` | `https://ntfy.sh` | ntfy server (you can host your own) |
 | `iceServers` | Google STUN | STUN/TURN servers |
-| `timeout` | 15 s | Max pairing delay (`join` only) |
+| `timeout` | 15 s, 10 s when resuming | Max pairing delay (`join` only) |
+| `heartbeatTimeout` | 10 s | Silence before a connection is considered lost |
+| `closeOnPageHide` | `true` | Close the session when the game page is left, so controllers know right away (`host` only) |
 | `player` | remembered on the device | Player ID, to get the same number back when reconnecting (`join` only) |
 | `resume` | `false` | Automatic reconnection rather than a QR code scan, refused for a kicked player (`join` only). On refusal, the error has `reason: "kicked"` (or `"busy"` when too many phones join at once) |
 | `controllerUrl` | `"controller.html"` | Controller page URL, resolved against the current page (`host` only). `HOSTED_CONTROLLER_URL` points to a ready-made one, for quick tests |

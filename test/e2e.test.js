@@ -2,7 +2,7 @@
 // Run: node --experimental-eventsource e2e.test.js
 import http from "node:http";
 import assert from "node:assert/strict";
-import { RTCPeerConnection } from "node-datachannel/polyfill";
+import { RTCPeerConnection, RTCDataChannel } from "node-datachannel/polyfill";
 
 globalThis.RTCPeerConnection = RTCPeerConnection;
 
@@ -444,6 +444,49 @@ const busy = await join(crowded.id, {
 assert.equal(busy.reason, "busy");
 crowded.close();
 
+// --- Heartbeat: pings keep a quiet connection alive, silence drops it
+const beating = await host({
+    ...options,
+    heartbeatTimeout: 1000,
+});
+const beatingPad = await connect(beating, "beating", {
+    heartbeatTimeout: 1000,
+});
+await new Promise(resolve => setTimeout(resolve, 2500));
+assert.ok(beatingPad.isConnected && beating.controllers[0].isConnected, "no events for a while, still connected thanks to pings");
+
+// Freeze both sides: no more pings (like a locked phone or a sleeping computer)
+const originalSend = RTCDataChannel.prototype.send;
+RTCDataChannel.prototype.send = function (data) {
+    if (!String(data).includes('"ping"')) {
+        originalSend.call(this, data);
+    }
+};
+const silenceStart = Date.now();
+const [displaySide, phoneSide] = await Promise.all([
+    withTimeout(next(beating, Events.DISCONNECT), 5000),
+    withTimeout(next(beatingPad, Events.DISCONNECT), 5000),
+]);
+const silence = Date.now() - silenceStart;
+RTCDataChannel.prototype.send = originalSend;
+assert.equal(displaySide.detail.reason, DisconnectReasons.LOST);
+assert.equal(phoneSide.detail.reason, DisconnectReasons.LOST);
+assert.ok(silence >= 900 && silence < 2500, `lost after the heartbeat timeout (${silence}ms)`);
+beating.close();
+
+// --- Leaving the game page ends the session
+const page = new EventTarget();
+globalThis.addEventListener = page.addEventListener.bind(page);
+globalThis.removeEventListener = page.removeEventListener.bind(page);
+const leaving = await host(options);
+const leavingPad = await connect(leaving, "leaving");
+const ended = next(leavingPad, Events.DISCONNECT);
+page.dispatchEvent(new Event("pagehide"));
+assert.ok(leaving.isClosed);
+assert.equal((await withTimeout(ended, 5000)).detail.reason, DisconnectReasons.ENDED);
+delete globalThis.addEventListener;
+delete globalThis.removeEventListener;
+
 // --- A failed offer preparation is retried when a controller says hello
 let failures = 1;
 globalThis.RTCPeerConnection = class extends RTCPeerConnection {
@@ -461,5 +504,5 @@ resilient.close();
 
 ntfy.closeAllConnections();
 ntfy.close();
-console.log("✓ multi-controllers: numbers, relayed events, broadcast and targeted sends, comeback, second tab, kick freeing the place, kick during pairing, busy, session end with reason, device events, default actions, custom events");
+console.log("✓ multi-controllers: numbers, relayed events, broadcast and targeted sends, comeback, second tab, kick freeing the place, kick during pairing, busy, session end with reason, heartbeat, page hide, device events, default actions, custom events");
 process.exit(0);
