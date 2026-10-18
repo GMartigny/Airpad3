@@ -103,32 +103,29 @@ else {
         status.classList.add("hidden");
         document.querySelector(".pad").classList.remove("hidden");
 
-        pad.on("message", ({ vibrate }) => {
-            if (vibrate) {
-                navigator.vibrate?.(vibrate);
-            }
+        pad.addEventListener("vibrate", ({ detail: duration }) => {
+            navigator.vibrate?.(duration);
         });
-        pad.on("close", () => {
+        pad.addEventListener("close", () => {
             status.textContent = "Display disconnected";
             status.classList.remove("hidden");
         });
 
-        const press = (button, state) => {
-            const pressed = state === "down";
-            if (button.classList.contains("pressed") === pressed) {
+        const press = (button, pressed) => {
+            if (button.classList.contains("pressed") === pressed || !pad.isOpen) {
                 return;
             }
             button.classList.toggle("pressed", pressed);
-            pad.send({ name: button.dataset.name, state });
+            pad.send(pressed ? "buttondown" : "buttonup", button.dataset.name);
         };
 
         document.querySelectorAll("button").forEach((button) => {
             button.addEventListener("pointerdown", (event) => {
                 button.setPointerCapture(event.pointerId);
-                press(button, "down");
+                press(button, true);
             });
             ["pointerup", "pointercancel", "lostpointercapture"].forEach((eventName) => {
-                button.addEventListener(eventName, () => press(button, "up"));
+                button.addEventListener(eventName, () => press(button, false));
             });
             button.addEventListener("contextmenu", event => event.preventDefault());
         });

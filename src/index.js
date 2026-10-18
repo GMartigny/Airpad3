@@ -17,16 +17,6 @@ const DEFAULT_ICE_SERVERS = [
  */
 
 /**
- * @typedef {Object} Peer
- * @property {Function} on - on(eventName, callback) : "open", "message", "close", "error"
- * @property {Function} off - off(eventName, callback)
- * @property {Function} send - send any JSON-serializable data
- * @property {Function} close - close the connection
- * @property {Promise<void>} ready - resolved when the channel opens
- * @property {RTCPeerConnection} connection - underlying WebRTC connection
- */
-
-/**
  * @param {number} [length=16] -
  * @return {string}
  */
@@ -79,68 +69,123 @@ function withTimeout (promise, timeout) {
 }
 
 /**
- * @param {RTCPeerConnection} connection -
- * @param {Promise<RTCDataChannel>} channelPromise -
- * @return {Peer & {emit: Function}}
+ * Events dispatched locally, that can't be sent by the remote peer.
  */
-function createPeer (connection, channelPromise) {
-    const listeners = {};
-    let channel;
+const RESERVED_EVENTS = new Set(["open", "close", "error"]);
 
-    const peer = {
-        connection,
-        on (eventName, callback) {
-            (listeners[eventName] ??= new Set()).add(callback);
-            return peer;
-        },
-        off (eventName, callback) {
-            listeners[eventName]?.delete(callback);
-            return peer;
-        },
-        emit (eventName, payload) {
-            listeners[eventName]?.forEach(callback => callback(payload));
-        },
-        send (data) {
-            if (channel?.readyState !== "open") {
-                throw new Error("Airpad: connection is not open");
-            }
-            channel.send(JSON.stringify(data));
-        },
-        close () {
-            channel?.close();
-            connection.close();
-        },
-    };
+/**
+ * One end of an Airpad connection.
+ * Works like any native event target: `addEventListener(type, listener)`.
+ * Anything sent with `send(type, detail)` is dispatched on the remote peer
+ * as a `CustomEvent` of the same type, with `detail` as payload.
+ *
+ * Built-in events: "open", "close" and "error" (the error is in `event.detail`).
+ */
+export class Peer extends EventTarget {
+    #channel;
 
-    peer.ready = channelPromise.then((dataChannel) => {
-        channel = dataChannel;
-        channel.addEventListener("message", ({ data }) => {
-            try {
-                peer.emit("message", JSON.parse(data));
-            }
-            catch (error) {
-                peer.emit("error", error);
+    /**
+     * @param {RTCPeerConnection} connection -
+     * @param {Promise<RTCDataChannel>} channelPromise -
+     */
+    constructor (connection, channelPromise) {
+        super();
+
+        /**
+         * Underlying WebRTC connection
+         * @type {RTCPeerConnection}
+         */
+        this.connection = connection;
+
+        connection.addEventListener("connectionstatechange", () => {
+            if (connection.connectionState === "failed") {
+                this.#dispatch("error", new Error("Airpad: WebRTC connection failed"));
             }
         });
-        channel.addEventListener("close", () => peer.emit("close"));
 
-        if (channel.readyState === "open") {
-            return undefined;
-        }
-        return new Promise((resolve) => {
-            channel.addEventListener("open", () => resolve(), {
-                once: true,
+        /**
+         * Resolved when the connection opens
+         * @type {Promise<void>}
+         */
+        this.ready = channelPromise.then((channel) => {
+            this.#channel = channel;
+            channel.addEventListener("message", ({ data }) => this.#receive(data));
+            channel.addEventListener("close", () => this.#dispatch("close"));
+
+            if (channel.readyState === "open") {
+                return undefined;
+            }
+            return new Promise((resolve) => {
+                channel.addEventListener("open", () => resolve(), {
+                    once: true,
+                });
             });
-        });
-    }).then(() => peer.emit("open"));
+        }).then(() => this.#dispatch("open"));
+    }
 
-    connection.addEventListener("connectionstatechange", () => {
-        if (connection.connectionState === "failed") {
-            peer.emit("error", new Error("Airpad: WebRTC connection failed"));
+    /**
+     * Whether the connection is open
+     * @return {boolean}
+     */
+    get isOpen () {
+        return this.#channel?.readyState === "open";
+    }
+
+    /**
+     * Dispatch an event on the remote peer.
+     * @param {string} type - event type, listened with `addEventListener(type, …)` on the other side
+     * @param {*} [detail] - any JSON-serializable payload, available as `event.detail`
+     */
+    send (type, detail) {
+        if (typeof type !== "string" || !type) {
+            throw new TypeError("Airpad: event type must be a non-empty string");
         }
-    });
+        if (RESERVED_EVENTS.has(type)) {
+            throw new Error(`Airpad: "${type}" is a reserved event type`);
+        }
+        if (!this.isOpen) {
+            throw new Error("Airpad: connection is not open");
+        }
+        this.#channel.send(JSON.stringify({
+            type,
+            detail,
+        }));
+    }
 
-    return peer;
+    /**
+     * Close the connection.
+     */
+    close () {
+        this.#channel?.close();
+        this.connection.close();
+    }
+
+    /**
+     * @param {string} data -
+     */
+    #receive (data) {
+        let message;
+        try {
+            message = JSON.parse(data);
+        }
+        catch (error) {
+            this.#dispatch("error", error);
+            return;
+        }
+        if (typeof message?.type === "string" && !RESERVED_EVENTS.has(message.type)) {
+            this.#dispatch(message.type, message.detail);
+        }
+    }
+
+    /**
+     * @param {string} type -
+     * @param {*} [detail] -
+     */
+    #dispatch (type, detail) {
+        this.dispatchEvent(new CustomEvent(type, {
+            detail,
+        }));
+    }
 }
 
 /**
@@ -173,7 +218,7 @@ export async function host (options = {}) {
         sdp: connection.localDescription.sdp,
     });
 
-    const peer = createPeer(connection, Promise.resolve(channel));
+    const peer = new Peer(connection, Promise.resolve(channel));
     peer.id = id;
     if (controllerUrl) {
         const url = new URL(controllerUrl, globalThis.location?.href);
@@ -189,7 +234,9 @@ export async function host (options = {}) {
             type: "answer",
             sdp,
         }))
-        .catch(error => peer.emit("error", error));
+        .catch(error => peer.dispatchEvent(new CustomEvent("error", {
+            detail: error,
+        })));
 
     return peer;
 }
@@ -236,7 +283,7 @@ export async function join (id, options = {}) {
         sdp: connection.localDescription.sdp,
     });
 
-    const peer = createPeer(connection, channelPromise);
+    const peer = new Peer(connection, channelPromise);
     try {
         await withTimeout(peer.ready, timeout);
     }

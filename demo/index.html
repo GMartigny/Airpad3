@@ -65,33 +65,32 @@ const player = { x: 300, y: 180, size: 40, color: "#C9211E" };
 const colors = ["#C9211E", "#2E86DE", "#10AC84", "#F6B93B"];
 const speed = 4;
 
-display.on("open", () => {
+display.addEventListener("open", () => {
     document.getElementById("pairing").classList.add("hidden");
     canvas.classList.remove("hidden");
     requestAnimationFrame(loop);
 });
 
-display.on("message", ({ name, state }) => {
-    if (state === "down") {
-        keys.add(name);
-        if (name === "A") {
-            player.color = colors[(colors.indexOf(player.color) + 1) % colors.length];
-            display.send({ vibrate: 30 });
-        }
-    }
-    else {
-        keys.delete(name);
+display.addEventListener("buttondown", ({ detail: button }) => {
+    keys.add(button);
+    if (button === "A") {
+        player.color = colors[(colors.indexOf(player.color) + 1) % colors.length];
+        display.send("vibrate", 30);
     }
 });
 
-display.on("close", () => {
+display.addEventListener("buttonup", ({ detail: button }) => {
+    keys.delete(button);
+});
+
+display.addEventListener("close", () => {
     status.textContent = "Controller disconnected. Reload the page to play again.";
     canvas.classList.add("hidden");
     document.getElementById("pairing").classList.remove("hidden");
     qrLink.classList.add("hidden");
 });
 
-display.on("error", (error) => {
+display.addEventListener("error", ({ detail: error }) => {
     status.textContent = error.message;
 });
 

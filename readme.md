@@ -13,21 +13,40 @@ Pairing goes through [ntfy.sh](https://ntfy.sh), a free public HTTP pub/sub. Onc
 
 ## Usage
 
+Both ends are native `EventTarget`s. Anything sent with `send(type, detail)` is dispatched on the other device as a `CustomEvent` of the same type, with `detail` as payload. Works both ways.
+
 ```js
-// Display
+// Display (computer)
 import { host } from "airpad3";
 
 const display = await host({ controllerUrl: "remote/" });
 showQrCode(display.url);
-display.on("open", () => console.log("Controller connected"));
-display.on("message", data => console.log(data));
 
-// Controller
+display.addEventListener("open", () => console.log("Controller connected"));
+display.addEventListener("buttondown", ({ detail }) => {
+    console.log(`${detail} pressed`);
+    display.send("vibrate", 30);
+});
+
+// Controller (phone)
 import { join } from "airpad3";
 
-const pad = await join(location.hash.slice(1));
-pad.send({ name: "A", state: "down" });
+const pad = await join(location.hash.slice(1)); // resolves once connected
+pad.addEventListener("vibrate", ({ detail }) => navigator.vibrate(detail));
+pad.send("buttondown", "A");
 ```
+
+### API
+
+| Member | Description |
+| --- | --- |
+| `host(options)` | Create a session (display side). Resolves with a `Peer` having `id` and `url` |
+| `join(id, options)` | Join a session (controller side). Resolves with an open `Peer` |
+| `peer.send(type, detail?)` | Dispatch a `CustomEvent` on the remote peer. `detail` must be JSON-serializable |
+| `peer.addEventListener(type, listener)` | Listen to remote or built-in events |
+| `peer.isOpen` | Whether the connection is open |
+| `peer.ready` | Promise resolved when the connection opens |
+| `peer.close()` | Close the connection |
 
 ### Options
 
@@ -38,9 +57,15 @@ pad.send({ name: "A", state: "down" });
 | `timeout` | 5 min (display), 15 s (controller) | Max pairing delay |
 | `controllerUrl` | – | Controller page URL, used to build `display.url` |
 
-### Events
+### Built-in events
 
-`open`, `message`, `close`, `error`
+| Event | Description |
+| --- | --- |
+| `open` | Connection established |
+| `close` | Connection closed, by either side |
+| `error` | Something went wrong, the `Error` is in `event.detail` |
+
+These types are reserved: `send()` refuses them.
 
 ## Demo
 
