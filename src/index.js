@@ -1,6 +1,17 @@
 import { createSignaling } from "./signaling.js";
+import { Events, RESERVED_EVENTS, reviveEvent } from "./events.js";
+import { watchDevice } from "./device.js";
 
 export { DEFAULT_SERVER } from "./signaling.js";
+export {
+    Events,
+    AirpadEvent,
+    ButtonEvent,
+    RotateEvent,
+    VibrateEvent,
+    LockEvent,
+    registerEvent,
+} from "./events.js";
 
 const TOPIC_PREFIX = "airpad-";
 const DEFAULT_ICE_SERVERS = [
@@ -69,17 +80,13 @@ function withTimeout (promise, timeout) {
 }
 
 /**
- * Events dispatched locally, that can't be sent by the remote peer.
- */
-const RESERVED_EVENTS = new Set(["open", "close", "error"]);
-
-/**
  * One end of an Airpad connection.
  * Works like any native event target: `addEventListener(type, listener)`.
- * Anything sent with `send(type, detail)` is dispatched on the remote peer
- * as a `CustomEvent` of the same type, with `detail` as payload.
+ * Any event passed to `send(event)` is dispatched on the remote peer,
+ * rebuilt with the same class, type and `detail`.
  *
- * Built-in events: "open", "close" and "error" (the error is in `event.detail`).
+ * Lifecycle events, dispatched locally: `Events.OPEN`, `Events.CLOSE`
+ * and `Events.ERROR` (the error is in `event.detail`).
  */
 export class Peer extends EventTarget {
     #channel;
@@ -108,7 +115,7 @@ export class Peer extends EventTarget {
         const opened = channelPromise.then((channel) => {
             this.#channel = channel;
             channel.addEventListener("message", ({ data }) => this.#receive(data));
-            channel.addEventListener("close", () => this.#dispatch("close"));
+            channel.addEventListener("close", () => this.#dispatch(Events.CLOSE));
 
             if (channel.readyState === "open") {
                 return undefined;
@@ -125,9 +132,9 @@ export class Peer extends EventTarget {
          * @type {Promise<void>}
          */
         this.ready = Promise.race([opened, failed]).then(
-            () => this.#dispatch("open"),
+            () => this.#dispatch(Events.OPEN),
             (error) => {
-                this.#dispatch("error", error);
+                this.#dispatch(Events.ERROR, error);
                 throw error;
             },
         );
@@ -145,22 +152,23 @@ export class Peer extends EventTarget {
 
     /**
      * Dispatch an event on the remote peer.
-     * @param {string} type - event type, listened with `addEventListener(type, …)` on the other side
-     * @param {*} [detail] - any JSON-serializable payload, available as `event.detail`
+     * @example peer.send(new ButtonEvent(Events.BUTTON_DOWN, { button: "A" }))
+     * @example peer.send(new CustomEvent("score", { detail: 42 }))
+     * @param {Event} event - any event, its `detail` must be JSON-serializable
      */
-    send (type, detail) {
-        if (typeof type !== "string" || !type) {
-            throw new TypeError("Airpad: event type must be a non-empty string");
+    send (event) {
+        if (!(event instanceof Event)) {
+            throw new TypeError("Airpad: send() expects an Event, like new ButtonEvent(…) or new CustomEvent(…)");
         }
-        if (RESERVED_EVENTS.has(type)) {
-            throw new Error(`Airpad: "${type}" is a reserved event type`);
+        if (RESERVED_EVENTS.has(event.type)) {
+            throw new Error(`Airpad: "${event.type}" is a reserved event type`);
         }
         if (!this.isOpen) {
             throw new Error("Airpad: connection is not open");
         }
         this.#channel.send(JSON.stringify({
-            type,
-            detail,
+            type: event.type,
+            detail: event.detail,
         }));
     }
 
@@ -181,11 +189,19 @@ export class Peer extends EventTarget {
             message = JSON.parse(data);
         }
         catch (error) {
-            this.#dispatch("error", error);
+            this.#dispatch(Events.ERROR, error);
             return;
         }
-        if (typeof message?.type === "string" && !RESERVED_EVENTS.has(message.type)) {
-            this.#dispatch(message.type, message.detail);
+        if (typeof message?.type !== "string" || !message.type || RESERVED_EVENTS.has(message.type)) {
+            return;
+        }
+        const event = reviveEvent(message.type, message.detail);
+        const notCanceled = this.dispatchEvent(event);
+        if (notCanceled && typeof event.defaultAction === "function") {
+            // Default actions are best effort (no vibration support, orientation lock refused…)
+            Promise.resolve()
+                .then(() => event.defaultAction())
+                .catch(() => {});
         }
     }
 
@@ -246,7 +262,7 @@ export async function host (options = {}) {
             type: "answer",
             sdp,
         }))
-        .catch(error => peer.dispatchEvent(new CustomEvent("error", {
+        .catch(error => peer.dispatchEvent(new CustomEvent(Events.ERROR, {
             detail: error,
         })));
 
@@ -257,7 +273,8 @@ export async function host (options = {}) {
  * Controller side (phone): join a session from its ID.
  * Resolves once the channel is open.
  * @param {string} id - ID read from the QR code
- * @param {AirpadOptions} [options] -
+ * @param {AirpadOptions & {deviceEvents?: boolean}} [options] - `deviceEvents` (default `true`)
+ * sends `Events.ROTATE`, `Events.LOCK` and `Events.UNLOCK` automatically
  * @return {Promise<Peer>}
  */
 export async function join (id, options = {}) {
@@ -265,6 +282,7 @@ export async function join (id, options = {}) {
         server,
         iceServers = DEFAULT_ICE_SERVERS,
         timeout = 15 * 1000,
+        deviceEvents = true,
     } = options;
 
     const signaling = createSignaling(TOPIC_PREFIX + id, {
@@ -302,6 +320,12 @@ export async function join (id, options = {}) {
     catch (error) {
         connection.close();
         throw error;
+    }
+
+    if (deviceEvents) {
+        peer.addEventListener(Events.CLOSE, watchDevice(peer), {
+            once: true,
+        });
     }
     return peer;
 }

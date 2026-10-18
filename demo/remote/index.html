@@ -89,7 +89,7 @@
 </div>
 
 <script type="module">
-import { join } from "../../src/index.js";
+import { join, Events, ButtonEvent } from "../../src/index.js";
 
 const status = document.getElementById("status");
 const id = location.hash.slice(1);
@@ -103,10 +103,8 @@ else {
         status.classList.add("hidden");
         document.querySelector(".pad").classList.remove("hidden");
 
-        pad.addEventListener("vibrate", ({ detail: duration }) => {
-            navigator.vibrate?.(duration);
-        });
-        pad.addEventListener("close", () => {
+        // Vibrations, orientation and lock events are handled by the lib
+        pad.addEventListener(Events.CLOSE, () => {
             status.textContent = "Display disconnected";
             status.classList.remove("hidden");
         });
@@ -116,7 +114,9 @@ else {
                 return;
             }
             button.classList.toggle("pressed", pressed);
-            pad.send(pressed ? "buttondown" : "buttonup", button.dataset.name);
+            pad.send(new ButtonEvent(pressed ? Events.BUTTON_DOWN : Events.BUTTON_UP, {
+                button: button.dataset.name,
+            }));
         };
 
         document.querySelectorAll("button").forEach((button) => {

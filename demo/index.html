@@ -41,7 +41,7 @@
 
 <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
 <script type="module">
-import { host } from "../src/index.js";
+import { host, Events, VibrateEvent } from "../src/index.js";
 
 const status = document.getElementById("status");
 const qrLink = document.getElementById("qr");
@@ -65,36 +65,52 @@ const player = { x: 300, y: 180, size: 40, color: "#C9211E" };
 const colors = ["#C9211E", "#2E86DE", "#10AC84", "#F6B93B"];
 const speed = 4;
 
-display.addEventListener("open", () => {
+display.addEventListener(Events.OPEN, () => {
     document.getElementById("pairing").classList.add("hidden");
     canvas.classList.remove("hidden");
     requestAnimationFrame(loop);
 });
 
-display.addEventListener("buttondown", ({ detail: button }) => {
+display.addEventListener(Events.BUTTON_DOWN, ({ button }) => {
     keys.add(button);
     if (button === "A") {
         player.color = colors[(colors.indexOf(player.color) + 1) % colors.length];
-        display.send("vibrate", 30);
+        display.send(new VibrateEvent(Events.VIBRATE, { pattern: 30 }));
     }
 });
 
-display.addEventListener("buttonup", ({ detail: button }) => {
+display.addEventListener(Events.BUTTON_UP, ({ button }) => {
     keys.delete(button);
 });
 
-display.addEventListener("close", () => {
+let paused = false;
+let orientation = "landscape";
+display.addEventListener(Events.ROTATE, (event) => {
+    orientation = event.orientation;
+});
+display.addEventListener(Events.LOCK, () => {
+    paused = true;
+    keys.clear();
+});
+display.addEventListener(Events.UNLOCK, () => {
+    paused = false;
+});
+
+display.addEventListener(Events.CLOSE, () => {
     status.textContent = "Controller disconnected. Reload the page to play again.";
     canvas.classList.add("hidden");
     document.getElementById("pairing").classList.remove("hidden");
     qrLink.classList.add("hidden");
 });
 
-display.addEventListener("error", ({ detail: error }) => {
+display.addEventListener(Events.ERROR, ({ detail: error }) => {
     status.textContent = error.message;
 });
 
 function loop () {
+    if (paused) {
+        keys.clear();
+    }
     const boost = keys.has("B") ? 2 : 1;
     if (keys.has("Up")) player.y -= speed * boost;
     if (keys.has("Down")) player.y += speed * boost;
@@ -106,6 +122,15 @@ function loop () {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.fillStyle = player.color;
     ctx.fillRect(player.x, player.y, player.size, player.size);
+
+    const message = paused ? "Paused: phone locked" :
+        orientation === "portrait" ? "Turn your phone to landscape" : "";
+    if (message) {
+        ctx.fillStyle = "#eee";
+        ctx.font = "24px system-ui, sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText(message, canvas.width / 2, 40);
+    }
     requestAnimationFrame(loop);
 }
 </script>

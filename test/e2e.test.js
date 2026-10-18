@@ -65,17 +65,53 @@ const ntfy = http.createServer((request, response) => {
 await new Promise(resolve => ntfy.listen(0, resolve));
 const server = `http://localhost:${ntfy.address().port}`;
 
-const { host, join } = await import("../src/index.js");
+const {
+    host,
+    join,
+    Events,
+    AirpadEvent,
+    ButtonEvent,
+    RotateEvent,
+    LockEvent,
+    VibrateEvent,
+    registerEvent,
+} = await import("../src/index.js");
+
+// --- Fake browser APIs used on the controller side
+const vibrations = [];
+Object.defineProperty(globalThis, "navigator", {
+    value: {
+        vibrate: pattern => vibrations.push(pattern),
+    },
+    configurable: true,
+});
+const portraitQuery = Object.assign(new EventTarget(), {
+    matches: true,
+});
+globalThis.matchMedia = () => portraitQuery;
+globalThis.document = Object.assign(new EventTarget(), {
+    visibilityState: "visible",
+});
+
 const options = {
     server,
     iceServers: [],
 };
 
 /**
+ * @param {EventTarget} target -
+ * @param {string} type -
+ * @return {Promise<Event>}
+ */
+const next = (target, type) => new Promise(resolve => target.addEventListener(type, resolve, {
+    once: true,
+}));
+
+/**
  * libdatachannel (the native WebRTC behind node-datachannel) sometimes rejects the answer with
  * "Got a remote candidate without ICE transport" and closes the connection.
  * This race is specific to the test environment, so pairing is retried a few times.
- * @return {Promise<{display: Peer, pad: Peer}>}
+ * @return {Promise<{display: Peer, pad: Peer, initialRotate: Promise<Event>}>}
  */
 async function pair () {
     for (let attempt = 1; ; attempt++) {
@@ -83,11 +119,12 @@ async function pair () {
             ...options,
             controllerUrl: "https://example.com/remote/",
         });
+        const initialRotate = next(display, Events.ROTATE);
         const displayOpen = new Promise((resolve, reject) => {
-            display.addEventListener("open", resolve, {
+            display.addEventListener(Events.OPEN, resolve, {
                 once: true,
             });
-            display.addEventListener("error", ({ detail }) => reject(detail), {
+            display.addEventListener(Events.ERROR, ({ detail }) => reject(detail), {
                 once: true,
             });
         });
@@ -98,6 +135,7 @@ async function pair () {
             return {
                 display,
                 pad,
+                initialRotate,
             };
         }
         catch (error) {
@@ -109,44 +147,102 @@ async function pair () {
     }
 }
 
-const { display, pad } = await pair();
+const { display, pad, initialRotate } = await pair();
 assert.match(display.id, /^[a-z0-9]{16}$/);
 assert.equal(display.url, `https://example.com/remote/#${display.id}`);
-
-const received = [];
-display.addEventListener("press", event => received.push(event.detail));
-
 assert.ok(pad instanceof EventTarget);
 assert.ok(pad.isOpen && display.isOpen);
 
-const vibrate = new Promise(resolve => pad.addEventListener("vibrate", resolve, {
-    once: true,
-}));
-pad.send("press", {
+// Orientation is sent automatically once connected, then on each change
+let event = await initialRotate;
+assert.ok(event instanceof RotateEvent);
+assert.equal(event.orientation, "portrait");
+
+let received = next(display, Events.ROTATE);
+portraitQuery.matches = false;
+portraitQuery.dispatchEvent(new Event("change"));
+event = await received;
+assert.equal(event.orientation, "landscape");
+
+// Screen lock is sent automatically
+received = next(display, Events.LOCK);
+document.visibilityState = "hidden";
+document.dispatchEvent(new Event("visibilitychange"));
+event = await received;
+assert.ok(event instanceof LockEvent);
+assert.ok(event.locked);
+
+received = next(display, Events.UNLOCK);
+document.visibilityState = "visible";
+document.dispatchEvent(new Event("visibilitychange"));
+event = await received;
+assert.equal(event.locked, false);
+
+// Built-in event classes are rebuilt with their class on the other side
+received = next(display, Events.BUTTON_DOWN);
+pad.send(new ButtonEvent(Events.BUTTON_DOWN, {
     button: "A",
+}));
+event = await received;
+assert.ok(event instanceof ButtonEvent);
+assert.equal(event.type, "buttondown");
+assert.equal(event.button, "A");
+
+// Default action runs unless prevented
+received = next(pad, Events.VIBRATE);
+display.send(new VibrateEvent(Events.VIBRATE, {
+    pattern: [50, 30, 50],
+}));
+event = await received;
+assert.ok(event instanceof VibrateEvent);
+await new Promise(resolve => setTimeout(resolve, 20));
+assert.deepEqual(vibrations, [[50, 30, 50]]);
+
+pad.addEventListener(Events.VIBRATE, prevented => prevented.preventDefault(), {
+    once: true,
 });
-display.send("vibrate", 50);
+received = next(pad, Events.VIBRATE);
+display.send(new VibrateEvent(Events.VIBRATE));
+await received;
+await new Promise(resolve => setTimeout(resolve, 20));
+assert.equal(vibrations.length, 1);
 
-const vibrateEvent = await vibrate;
-await new Promise(resolve => setTimeout(resolve, 100));
-
-assert.ok(vibrateEvent instanceof CustomEvent);
-assert.equal(vibrateEvent.detail, 50);
-assert.deepEqual(received, [{
-    button: "A",
-}]);
-assert.throws(() => pad.send("close"), /reserved/);
-assert.throws(() => pad.send(""), /non-empty string/);
-
-await assert.rejects(join("inconnu", options), /session not found/);
-
-const closed = new Promise(resolve => display.addEventListener("close", resolve, {
-    once: true,
+// A plain CustomEvent works too
+received = next(pad, "score");
+display.send(new CustomEvent("score", {
+    detail: 42,
 }));
+event = await received;
+assert.ok(event instanceof AirpadEvent);
+assert.equal(event.detail, 42);
+
+// Custom classes can be registered
+class JumpEvent extends AirpadEvent {
+    get height () {
+        return this.detail.height;
+    }
+}
+registerEvent("jump", JumpEvent);
+received = next(display, "jump");
+pad.send(new JumpEvent("jump", {
+    height: 3,
+}));
+event = await received;
+assert.ok(event instanceof JumpEvent);
+assert.equal(event.height, 3);
+
+// Invalid sends
+assert.throws(() => pad.send(new CustomEvent(Events.CLOSE)), /reserved/);
+assert.throws(() => pad.send("buttondown"), /expects an Event/);
+assert.throws(() => registerEvent(Events.OPEN, JumpEvent), /reserved/);
+
+await assert.rejects(join("unknown", options), /session not found/);
+
+const closed = next(display, Events.CLOSE);
 pad.close();
 await closed;
 display.close();
 ntfy.closeAllConnections();
 ntfy.close();
-console.log("✓ pairing through ntfy, events both ways, reserved types rejected, close propagated, unknown session rejected");
+console.log("✓ pairing, device events, event classes both ways, default actions, custom events, close, unknown session");
 process.exit(0);
