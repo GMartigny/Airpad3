@@ -60,10 +60,16 @@ const ATTACH = Symbol("attach");
 const RELAY = Symbol("relay");
 
 /**
- * Internal method to kick a controller
+ * Internal method to tell the other side why it's disconnected, then close
  * @type {symbol}
  */
-const KICK = Symbol("kick");
+const DISMISS = Symbol("dismiss");
+
+/**
+ * Internal method deciding whether a player may join
+ * @type {symbol}
+ */
+const ADMIT = Symbol("admit");
 
 /**
  * Why a peer got disconnected, in `event.detail.reason` of `Events.DISCONNECT`
@@ -77,15 +83,24 @@ export const DisconnectReasons = Object.freeze({
     LOST: "lost",
     // The display kicked this controller: it can only join again by scanning the QR code
     KICKED: "kicked",
+    // The display closed the session
+    ENDED: "ended",
 });
 
 /**
- * Internal messages between peers, not dispatched as events
- * @type {string}
+ * Internal messages between peers, not dispatched as events, by disconnect reason
+ * @type {Object<string, string>}
  */
-const KICK_MESSAGE = JSON.stringify({
-    control: "kick",
-});
+const CONTROL_MESSAGES = {
+    [DisconnectReasons.KICKED]: "kick",
+    [DisconnectReasons.ENDED]: "end",
+};
+
+/**
+ * Max number of pairings in progress, against hello spam
+ * @type {number}
+ */
+const MAX_PENDING = 10;
 
 /**
  * @typedef {Object} AirpadOptions
@@ -221,8 +236,14 @@ export class Peer extends EventTarget {
     number;
 
     /**
-     * Resolved when the connection first opens (phone side)
-     * @type {Promise<void>}
+     * Session ID (phone side only)
+     * @type {string|undefined}
+     */
+    id;
+
+    /**
+     * Resolved when the connection first opens (phone side only)
+     * @type {Promise<void>|undefined}
      */
     ready;
 
@@ -276,18 +297,21 @@ export class Peer extends EventTarget {
     }
 
     /**
-     * Tell the other side it's kicked, then close the connection.
+     * Tell the other side why it's disconnected, then close the connection.
+     * @param {string} reason - `DisconnectReasons.KICKED` or `DisconnectReasons.ENDED`
      */
-    [KICK] () {
+    [DISMISS] (reason) {
         if (this.isConnected) {
             try {
-                this.#channel.send(KICK_MESSAGE);
+                this.#channel.send(JSON.stringify({
+                    control: CONTROL_MESSAGES[reason],
+                }));
             }
             catch {
                 // Closing anyway
             }
         }
-        this.#detach(DisconnectReasons.KICKED);
+        this.#detach(reason);
     }
 
     /**
@@ -406,8 +430,9 @@ export class Peer extends EventTarget {
             this.#dispatch(Events.ERROR, error);
             return;
         }
-        if (message?.control === "kick") {
-            this.#detach(DisconnectReasons.KICKED);
+        if (message?.control) {
+            const reason = Object.keys(CONTROL_MESSAGES).find(key => CONTROL_MESSAGES[key] === message.control);
+            this.#detach(reason ?? DisconnectReasons.LOST);
             return;
         }
         if (typeof message?.type !== "string" || !message.type || RESERVED_EVENTS.has(message.type)) {
@@ -457,6 +482,7 @@ export class Session extends EventTarget {
     url;
 
     #controllers = new Map();
+    #numbers = new Map();
     #kicked = new Set();
     #closed = false;
     #dispose;
@@ -474,7 +500,8 @@ export class Session extends EventTarget {
     }
 
     /**
-     * Every controller that joined, connected or not, by player number
+     * Every controller that joined, connected or not, by player number.
+     * A player keeps its place (and number) until kicked.
      * @return {Peer[]}
      */
     get controllers () {
@@ -502,8 +529,9 @@ export class Session extends EventTarget {
     }
 
     /**
-     * Disconnect a controller and refuse its automatic reconnections:
-     * it can only join again by scanning the QR code.
+     * Remove a controller from the session: it's disconnected, its place and number are freed,
+     * and its automatic reconnections are refused. It can only join again by scanning the QR code,
+     * as a new player.
      * Same as `controller.kick()`.
      * @param {Peer} controller -
      */
@@ -513,25 +541,49 @@ export class Session extends EventTarget {
             throw new Error("Airpad: this controller isn't part of the session");
         }
         this.#kicked.add(player);
-        controller[KICK]();
+        this.#controllers.delete(player);
+        this.#numbers.delete(player);
+        controller[DISMISS](DisconnectReasons.KICKED);
     }
 
     /**
-     * Whether a player was kicked and can't resume automatically.
-     * A fresh scan of the QR code lifts it.
+     * Whether a kicked player is still refused
      * @param {string} player -
-     * @param {boolean} resume - automatic reconnection, not a scan
-     * @return {boolean} whether this hello is refused
+     * @return {boolean}
      */
-    [KICK] (player, resume) {
-        if (!resume) {
-            this.#kicked.delete(player);
-        }
+    isKicked (player) {
         return this.#kicked.has(player);
     }
 
     /**
-     * End the session: disconnects every controller, and none can join anymore.
+     * Decide whether a player may join, and give it a number.
+     * A QR code scan (not a resume) lifts a kick.
+     * @param {string} player -
+     * @param {boolean} resume - automatic reconnection, not a QR code scan
+     * @return {number|undefined} the player number, or undefined if refused
+     */
+    [ADMIT] (player, resume) {
+        if (!resume) {
+            this.#kicked.delete(player);
+        }
+        if (this.#kicked.has(player)) {
+            return undefined;
+        }
+        if (!this.#numbers.has(player)) {
+            // Lowest free number, places freed by kicks are taken again
+            const taken = new Set(this.#numbers.values());
+            let number = 1;
+            while (taken.has(number)) {
+                number++;
+            }
+            this.#numbers.set(player, number);
+        }
+        return this.#numbers.get(player);
+    }
+
+    /**
+     * End the session: disconnects every controller (with `DisconnectReasons.ENDED`),
+     * and none can join anymore.
      */
     close () {
         if (this.#closed) {
@@ -539,7 +591,7 @@ export class Session extends EventTarget {
         }
         this.#closed = true;
         this.#dispose();
-        this.#controllers.forEach(controller => controller.close());
+        this.#controllers.forEach(controller => controller[DISMISS](DisconnectReasons.ENDED));
     }
 
     /**
@@ -615,7 +667,11 @@ export async function host (options = {}) {
 
     let next = prepareNext();
     const pending = new Map();
-    const numbers = new Map();
+    const refuse = (nonce, reason) => signaling.publish({
+        type: "refused",
+        nonce,
+        reason,
+    });
 
     const unsubscribe = signaling.subscribe(message => onMessage(message));
     const session = new Session(id, buildControllerUrl(controllerUrl, id, server), () => {
@@ -640,20 +696,17 @@ export async function host (options = {}) {
         }
         try {
             if (message.type === "hello") {
-                // A player keeps its number for the whole session
-                const player = String(message.player || message.nonce);
-                if (session[KICK](player, Boolean(message.resume))) {
-                    await signaling.publish({
-                        type: "refused",
-                        nonce: message.nonce,
-                        reason: DisconnectReasons.KICKED,
-                    });
+                if (pending.size >= MAX_PENDING) {
+                    await refuse(message.nonce, "busy");
                     return;
                 }
-                if (!numbers.has(player)) {
-                    numbers.set(player, numbers.size + 1);
+                // A player keeps its number for the whole session, unless kicked
+                const player = String(message.player || message.nonce);
+                const number = session[ADMIT](player, Boolean(message.resume));
+                if (number === undefined) {
+                    await refuse(message.nonce, DisconnectReasons.KICKED);
+                    return;
                 }
-                const number = numbers.get(player);
 
                 // Take the prepared offer right away, so concurrent hellos never share one
                 const prepared = next;
@@ -690,6 +743,12 @@ export async function host (options = {}) {
                 const { connection, channel, player, number, timer } = pending.get(message.nonce);
                 pending.delete(message.nonce);
                 clearTimeout(timer);
+                // Kicked while pairing: refuse it
+                if (session.isKicked(player)) {
+                    connection.close();
+                    await refuse(message.nonce, DisconnectReasons.KICKED);
+                    return;
+                }
                 await connection.setRemoteDescription({
                     type: "answer",
                     sdp: message.sdp,
@@ -704,6 +763,19 @@ export async function host (options = {}) {
     }
 
     return session;
+}
+
+/**
+ * @param {string} reason -
+ * @return {Error} with the refusal `reason`
+ */
+function refusal (reason) {
+    const message = reason === DisconnectReasons.KICKED ?
+        "Airpad: kicked from this session, scan the QR code to join again" :
+        "Airpad: too many players joining at once, try again";
+    return Object.assign(new Error(message), {
+        reason,
+    });
 }
 
 /**
@@ -752,9 +824,7 @@ export async function join (id, options = {}) {
         throw new Error("Airpad: session not found");
     }
     if (offer.type === "refused") {
-        const error = new Error("Airpad: kicked from this session, scan the QR code to join again");
-        error.reason = offer.reason;
-        throw error;
+        throw refusal(offer.reason);
     }
 
     const connection = new RTCPeerConnection({
@@ -770,20 +840,31 @@ export async function join (id, options = {}) {
     peer.number = offer.number;
     peer.ready = peer[ATTACH](connection, channelPromise);
 
-    await connection.setRemoteDescription({
-        type: "offer",
-        sdp: offer.sdp,
-    });
-    await connection.setLocalDescription(await connection.createAnswer());
-    await gatherCandidates(connection);
-    await signaling.publish({
-        type: "answer",
-        nonce,
-        sdp: connection.localDescription.sdp,
-    });
-
     try {
-        await withTimeout(peer.ready, remaining());
+        await connection.setRemoteDescription({
+            type: "offer",
+            sdp: offer.sdp,
+        });
+        await connection.setLocalDescription(await connection.createAnswer());
+        await gatherCandidates(connection);
+        const answer = await signaling.publish({
+            type: "answer",
+            nonce,
+            sdp: connection.localDescription.sdp,
+        });
+        // The display can still refuse it (kicked while pairing)
+        const stopListening = new AbortController();
+        const refused = signaling.wait(message => message.type === "refused" && message.nonce === nonce, {
+            since: answer.id,
+            timeout: remaining(),
+            signal: stopListening.signal,
+        }).then(message => Promise.reject(refusal(message.reason)), () => new Promise(() => {}));
+        try {
+            await withTimeout(Promise.race([peer.ready, refused]), remaining());
+        }
+        finally {
+            stopListening.abort();
+        }
     }
     catch (error) {
         peer.close();

@@ -338,7 +338,7 @@ assert.ok(pad1Tab.isConnected && p1.isConnected && p2.isConnected);
 const pad3 = await connect(session, "player-three");
 assert.equal(pad3.number, 3);
 
-// --- Kicked: disconnected, automatic reconnections refused, a QR code scan is accepted
+// --- Kicked: disconnected, place freed, automatic reconnections refused, a QR code scan is accepted
 const [, , p3] = session.controllers;
 const pad3Kicked = next(pad3, Events.DISCONNECT);
 disconnected = next(session, Events.DISCONNECT);
@@ -348,6 +348,8 @@ assert.equal(event.controller, p3);
 assert.equal(event.detail.reason, DisconnectReasons.KICKED);
 assert.equal((await withTimeout(pad3Kicked, 5000)).detail.reason, DisconnectReasons.KICKED, "the phone knows it was kicked");
 assert.ok(p1.isConnected && p2.isConnected, "other players are not affected");
+assert.deepEqual(session.controllers.map(controller => controller.number), [1, 2], "the place is freed");
+assert.throws(() => session.kick(p3), /isn't part of the session/);
 
 const refused = await join(session.id, {
     ...options,
@@ -357,27 +359,90 @@ const refused = await join(session.id, {
 assert.match(refused.message, /kicked/);
 assert.equal(refused.reason, DisconnectReasons.KICKED);
 
+// The freed number goes to the next new player
+const pad5 = await connect(session, "player-five");
+assert.equal(pad5.number, 3, "lowest free number");
+
+// A scan lifts the kick: back as a new player, with the first free number
 const pad3Scanned = await connect(session, "player-three");
-assert.equal(pad3Scanned.number, 3, "a scan lifts the kick, same number");
-assert.ok(p3.isConnected);
+assert.equal(pad3Scanned.number, 4);
+const p3Again = session.controllers.find(controller => controller.number === 4);
+assert.notEqual(p3Again, p3, "a new controller, the kicked one is gone");
 
 // Resuming is still fine for players who weren't kicked
 const pad3Resumed = await connect(session, "player-three", {
     resume: true,
 });
-assert.equal(pad3Resumed.number, 3);
+assert.equal(pad3Resumed.number, 4);
 assert.throws(() => session.kick(new EventTarget()), /isn't part of the session/);
 
-// --- Closing the session disconnects everyone, nobody can join anymore
-const allClosed = Promise.all([pad1Tab, pad2, pad3Resumed].map(pad => withTimeout(next(pad, Events.DISCONNECT), 5000)));
+// --- Closing the session disconnects everyone with a reason, nobody can join anymore
+const reasons = Promise.all([pad1Tab, pad2, pad5, pad3Resumed].map(pad => withTimeout(next(pad, Events.DISCONNECT), 5000)));
 session.close();
-await allClosed;
+assert.ok((await reasons).every(({ detail }) => detail.reason === DisconnectReasons.ENDED), "phones know the session ended");
 assert.ok(session.isClosed);
 assert.ok(session.controllers.every(controller => !controller.isConnected));
 await assert.rejects(join(session.id, {
     ...options,
     timeout: 1500,
 }), /session not found/);
+
+// --- Raw protocol helpers, to play race conditions step by step
+const publish = async (sessionId, payload) => (await fetch(`${server}/airpad-${sessionId}`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+})).json();
+const read = async (sessionId, predicate) => {
+    for (let attempt = 0; attempt < 50; attempt++) {
+        const lines = (await (await fetch(`${server}/airpad-${sessionId}/json?poll=1&since=all`)).text())
+            .split("\n").filter(Boolean).map(line => JSON.parse(JSON.parse(line).message));
+        const found = lines.find(predicate);
+        if (found) {
+            return found;
+        }
+        await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    throw new Error("message not found");
+};
+
+// --- Kicked while pairing: the answer is refused
+const racing = await host(options);
+const racer = await connect(racing, "racer");
+await publish(racing.id, {
+    type: "hello",
+    nonce: "race-nonce",
+    player: "racer",
+    resume: true,
+});
+await read(racing.id, message => message.type === "offer" && message.nonce === "race-nonce");
+racing.controllers[0].kick();
+await publish(racing.id, {
+    type: "answer",
+    nonce: "race-nonce",
+    sdp: "not even used",
+});
+const raceRefusal = await read(racing.id, message => message.type === "refused" && message.nonce === "race-nonce");
+assert.equal(raceRefusal.reason, DisconnectReasons.KICKED);
+assert.deepEqual(racing.controllers, [], "the kicked player didn't sneak back in");
+assert.equal(racer.isConnected, false);
+racing.close();
+
+// --- Too many pairings at once: refused as busy
+const crowded = await host(options);
+for (let index = 0; index < 10; index++) {
+    await publish(crowded.id, {
+        type: "hello",
+        nonce: `crowd-${index}`,
+        player: `crowd-${index}`,
+    });
+}
+await read(crowded.id, message => message.type === "offer" && message.nonce === "crowd-9");
+const busy = await join(crowded.id, {
+    ...options,
+    player: "late",
+}).catch(error => error);
+assert.equal(busy.reason, "busy");
+crowded.close();
 
 // --- A failed offer preparation is retried when a controller says hello
 let failures = 1;
@@ -396,5 +461,5 @@ resilient.close();
 
 ntfy.closeAllConnections();
 ntfy.close();
-console.log("✓ multi-controllers: numbers, relayed events, broadcast and targeted sends, comeback, second tab, kick, session end, device events, default actions, custom events");
+console.log("✓ multi-controllers: numbers, relayed events, broadcast and targeted sends, comeback, second tab, kick freeing the place, kick during pairing, busy, session end with reason, device events, default actions, custom events");
 process.exit(0);

@@ -36,7 +36,7 @@ session.send(new CustomEvent("gameover")); // every connected controller
 
 - Events sent by a controller are dispatched on its `Peer` (`session.controllers`) **and** on the session, with `event.controller`.
 - `session.send(event)` reaches every connected controller, `controller.send(event)` a single one.
-- A controller keeps its `number` (from 1) for the whole session, even after a disconnection.
+- A controller keeps its place and `number` for the whole session, even after a disconnection, until kicked. A new player gets the lowest free number, from 1.
 
 ### Kicking a controller
 
@@ -44,7 +44,7 @@ session.send(new CustomEvent("gameover")); // every connected controller
 controller.kick(); // or session.kick(controller)
 ```
 
-The controller is disconnected, and its automatic reconnections are refused (resuming the last session, reconnect button, page reload…). Scanning the QR code again lets it back in, with the same number.
+The controller is disconnected and removed from `session.controllers`: its place and number are freed for the next new player. Its automatic reconnections are refused (resuming the last session, reconnect button, page reload…). Scanning the QR code again lets it back in, as a new player with the lowest free number.
 
 On the phone, `Events.DISCONNECT` tells why in `event.detail.reason`, one of `DisconnectReasons`:
 
@@ -53,6 +53,7 @@ On the phone, `Events.DISCONNECT` tells why in `event.detail.reason`, one of `Di
 | `CLOSED` | `close()` was called on this side |
 | `LOST` | The connection dropped, or the other side closed it |
 | `KICKED` | The display kicked this controller |
+| `ENDED` | The display closed the session |
 
 ### Controller page
 
@@ -72,7 +73,7 @@ On the phone, `Events.DISCONNECT` tells why in `event.detail.reason`, one of `Di
 - it remembers the last session: opening the page without `#id` resumes it, so a lost URL isn't a problem
 - it removes the ID from the URL once read: reloading the page resumes, only a QR code scan counts as a new join
 - when disconnected, it shows a reconnect button, and reconnects by itself when the page becomes visible again (unlocked phone)
-- when kicked, it asks to scan the QR code again
+- when kicked, or when the game is over, it says so, stops reconnecting and asks to scan a QR code again
 
 The default controller has a floating stick on the left half (it starts where the finger lands and moves relative to it) and two buttons stacked on the right half, each one a quarter of the screen, `A` on top and `B` below (or a single button filling the right half). It sends `STICK_MOVE`, `BUTTON_DOWN` and `BUTTON_UP` by itself, along with the automatic `ROTATE`, `LOCK` and `UNLOCK`, and goes fullscreen on first touch.
 
@@ -148,12 +149,13 @@ pad.send(new JumpEvent("jump", { height: 3 }));
 | --- | --- |
 | `host(options)` | Create a session (computer side). Resolves with a `Session` |
 | `session.id`, `session.url` | Session ID, and the controller URL to put in the QR code |
-| `session.controllers` | Every `Peer` that joined, connected or not, by number |
+| `session.controllers` | Every `Peer` in the session, connected or not, by number (kicked ones are removed) |
 | `session.send(event)` | Dispatch an event on every connected controller. Returns `false` when none got it |
-| `session.close()` | End the session, disconnecting every controller |
-| `controller.kick()` | Disconnect a controller, it can only come back by scanning the QR code (computer side) |
+| `session.close()` | End the session, disconnecting every controller with `DisconnectReasons.ENDED` |
+| `controller.kick()` | Remove a controller and free its place, it can only come back by scanning the QR code (computer side) |
 | `join(id, options)` | Join a session (phone side). Resolves with a connected `Peer` |
 | `peer.number` | Player number, from 1 |
+| `peer.id`, `peer.ready` | Session ID, and a promise resolved on the first connection (phone side only) |
 | `peer.send(event)` | Dispatch an event on the other side. Returns `false` (and sends nothing) when not connected |
 | `peer.isConnected` | Whether the connection is open |
 | `peer.close()` | Disconnect. On the computer, the player can still come back |
@@ -169,7 +171,7 @@ pad.send(new JumpEvent("jump", { height: 3 }));
 | `iceServers` | Google STUN | STUN/TURN servers |
 | `timeout` | 15 s | Max pairing delay (`join` only) |
 | `player` | remembered on the device | Player ID, to get the same number back when reconnecting (`join` only) |
-| `resume` | `false` | Automatic reconnection rather than a QR code scan, refused for a kicked player (`join` only). On refusal, the error has `reason: "kicked"` |
+| `resume` | `false` | Automatic reconnection rather than a QR code scan, refused for a kicked player (`join` only). On refusal, the error has `reason: "kicked"` (or `"busy"` when too many phones join at once) |
 | `controllerUrl` | `"controller.html"` | Controller page URL, resolved against the current page (`host` only). `HOSTED_CONTROLLER_URL` points to a ready-made one, for quick tests |
 | `deviceEvents` | `true` | Send `ROTATE`, `LOCK` and `UNLOCK` automatically (`join` only) |
 
@@ -191,7 +193,8 @@ Open `/demo/` on the computer and scan the QR code with a phone on the same netw
 - ntfy.sh applies per-IP rate limits to anonymous users.
 - Outside a local network, some NATs require a TURN server.
 - Each controller has its own WebRTC connection to the computer: fine for a living room full of players, not for hundreds.
-- Anyone with the session ID (in the QR code) can join, and a player ID is trusted as given.
+- Anyone with the session ID (in the QR code) can join. Pairing messages, player IDs included, are readable by anyone who knows it: they could impersonate a player.
+- At most 10 pairings are handled at once, against hello spam.
 
 ## Tests
 

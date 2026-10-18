@@ -409,19 +409,21 @@ export function mountController (options = {}) {
         }
     }
     let connecting = false;
-    let kicked = false;
+    // Once kicked, or once the session is over, only a new QR code scan can join
+    let finished = false;
 
-    const onKicked = () => {
-        kicked = true;
+    const finish = (text) => {
+        finished = true;
         writeStorage(storage, storageKey);
-        show("You were removed from the game. Scan the QR code to join again.");
+        show(text);
     };
+    const onKicked = () => finish("You were removed from the game. Scan the QR code to join again.");
 
     /**
      * @param {boolean} resume - automatic reconnection, not a QR code scan
      */
     const connect = async (resume) => {
-        if (connecting || kicked || peer?.isConnected) {
+        if (connecting || finished || peer?.isConnected) {
             return;
         }
         connecting = true;
@@ -445,6 +447,9 @@ export function mountController (options = {}) {
                 if (detail?.reason === "kicked") {
                     onKicked();
                 }
+                else if (detail?.reason === "ended") {
+                    finish("The game is over. Scan a new QR code to play again.");
+                }
                 else {
                     show("Disconnected", true);
                 }
@@ -457,9 +462,8 @@ export function mountController (options = {}) {
             if (error.reason === "kicked") {
                 onKicked();
             }
-            else if (resume) {
-                writeStorage(storage, storageKey);
-                show("Last session is over, scan the QR code on the screen");
+            else if (resume && error.reason !== "busy") {
+                finish("Last session is over, scan the QR code on the screen");
             }
             else {
                 show(error.message.replace(/^Airpad: /, ""), true);

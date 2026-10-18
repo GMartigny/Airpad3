@@ -110,15 +110,19 @@ export function createSignaling (topic, { server = DEFAULT_SERVER } = {}) {
      * @param {string} [options.since="all"] - ntfy message ID to listen from
      * @param {number} [options.timeout=15000] - in milliseconds
      * @param {number} [options.pollInterval=2000] - in milliseconds
+     * @param {AbortSignal} [options.signal] - stop waiting (rejects)
      * @return {Promise<Object>}
      */
-    function wait (predicate, { since = "all", timeout = 15 * 1000, pollInterval = 2000 } = {}) {
+    function wait (predicate, { since = "all", timeout = 15 * 1000, pollInterval = 2000, signal } = {}) {
         return new Promise((resolve, reject) => {
             const finish = (callback, value) => {
                 clearTimeout(timer);
+                signal?.removeEventListener("abort", onAbort);
                 unsubscribe();
                 callback(value);
             };
+            const onAbort = () => finish(reject, new Error("Airpad: aborted"));
+            signal?.addEventListener("abort", onAbort);
             const timer = setTimeout(() => finish(reject, new Error("Airpad: timed out")), timeout);
             const unsubscribe = subscribe((payload) => {
                 if (predicate(payload)) {

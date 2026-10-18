@@ -240,6 +240,28 @@ assert.match(statusText(), /removed from the game/);
 assert.equal(dom.window.localStorage.getItem("airpad:session"), null);
 mounted.destroy();
 
+// The session ended: says so, forgets it, never reconnects by itself
+dom.window.localStorage.setItem("airpad:session", "abc");
+mounted = mountController({
+    join: fakeJoin,
+    fullscreen: false,
+});
+await tick();
+let joinsBefore = joins.length;
+mounted.peer.isConnected = false;
+mounted.peer.dispatchEvent(new CustomEvent(Events.DISCONNECT, {
+    detail: {
+        reason: "ended",
+    },
+}));
+assert.match(statusText(), /game is over/);
+assert.ok(document.querySelector(".airpad-status button").hidden);
+assert.equal(dom.window.localStorage.getItem("airpad:session"), null);
+document.dispatchEvent(new dom.window.Event("visibilitychange"));
+await mounted.reconnect();
+assert.equal(joins.length, joinsBefore, "never reconnects once the game is over");
+mounted.destroy();
+
 // Last session is over: forgets it and asks to scan again
 dom.window.localStorage.setItem("airpad:session", "over");
 mounted = mountController({
@@ -249,6 +271,10 @@ mounted = mountController({
 await tick();
 assert.equal(dom.window.localStorage.getItem("airpad:session"), null);
 assert.match(statusText(), /scan the QR code/);
+joinsBefore = joins.length;
+document.dispatchEvent(new dom.window.Event("visibilitychange"));
+await mounted.reconnect();
+assert.equal(joins.length, joinsBefore, "stops trying a session that is over");
 mounted.destroy();
 
 // Nothing to join
@@ -257,9 +283,9 @@ mounted = mountController({
     fullscreen: false,
 });
 assert.equal(statusText(), "Scan the QR code shown on the screen");
-assert.equal(joins.length, 5);
+assert.equal(joins.length, 6);
 mounted.destroy();
 assert.ok(stored);
 
-console.log("✓ controller: layout, relative stick, clamping, throttling, release, multi-touch buttons, mountController (URL ID, resume, session over, reconnect, kick)");
+console.log("✓ controller: layout, relative stick, clamping, throttling, release, multi-touch buttons, mountController (URL ID, resume, session over, reconnect, kick, game over)");
 process.exit(0);
