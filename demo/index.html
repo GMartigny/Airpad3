@@ -49,7 +49,8 @@ const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
 
 const display = await host({
-    controllerUrl: "remote/",
+    // Default controller page shipped with the lib, served locally for the demo
+    controllerUrl: "../controller/",
 });
 
 const qr = qrcode(0, "M");
@@ -59,11 +60,12 @@ qrLink.innerHTML = qr.createSvgTag({ scalable: true });
 qrLink.href = display.url;
 status.textContent = "Scan this QR code with your phone";
 
-// Mini-game: move a square with the D-pad, A changes its color, B boosts
+// Mini-game: move a square with the stick, A changes its color, B boosts
 const keys = new Set();
+const stick = { x: 0, y: 0 };
 const player = { x: 300, y: 180, size: 40, color: "#C9211E" };
 const colors = ["#C9211E", "#2E86DE", "#10AC84", "#F6B93B"];
-const speed = 4;
+const speed = 6;
 
 display.addEventListener(Events.OPEN, () => {
     document.getElementById("pairing").classList.add("hidden");
@@ -83,6 +85,11 @@ display.addEventListener(Events.BUTTON_UP, ({ button }) => {
     keys.delete(button);
 });
 
+display.addEventListener(Events.STICK_MOVE, ({ x, y }) => {
+    stick.x = x;
+    stick.y = y;
+});
+
 let paused = false;
 let orientation = "landscape";
 display.addEventListener(Events.ROTATE, (event) => {
@@ -91,6 +98,8 @@ display.addEventListener(Events.ROTATE, (event) => {
 display.addEventListener(Events.LOCK, () => {
     paused = true;
     keys.clear();
+    stick.x = 0;
+    stick.y = 0;
 });
 display.addEventListener(Events.UNLOCK, () => {
     paused = false;
@@ -112,10 +121,8 @@ function loop () {
         keys.clear();
     }
     const boost = keys.has("B") ? 2 : 1;
-    if (keys.has("Up")) player.y -= speed * boost;
-    if (keys.has("Down")) player.y += speed * boost;
-    if (keys.has("Left")) player.x -= speed * boost;
-    if (keys.has("Right")) player.x += speed * boost;
+    player.x += stick.x * speed * boost;
+    player.y += stick.y * speed * boost;
     player.x = Math.max(0, Math.min(canvas.width - player.size, player.x));
     player.y = Math.max(0, Math.min(canvas.height - player.size, player.y));
 

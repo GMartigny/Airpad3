@@ -71,6 +71,7 @@ const {
     Events,
     AirpadEvent,
     ButtonEvent,
+    StickEvent,
     RotateEvent,
     LockEvent,
     VibrateEvent,
@@ -149,7 +150,7 @@ async function pair () {
 
 const { display, pad, initialRotate } = await pair();
 assert.match(display.id, /^[a-z0-9]{16}$/);
-assert.equal(display.url, `https://example.com/remote/#${display.id}`);
+assert.equal(display.url, `https://example.com/remote/?server=${encodeURIComponent(server)}#${display.id}`);
 assert.ok(pad instanceof EventTarget);
 assert.ok(pad.isOpen && display.isOpen);
 
@@ -177,6 +178,17 @@ document.visibilityState = "visible";
 document.dispatchEvent(new Event("visibilitychange"));
 event = await received;
 assert.equal(event.locked, false);
+
+// Stick position is rebuilt as a StickEvent
+received = next(display, Events.STICK_MOVE);
+pad.send(new StickEvent(Events.STICK_MOVE, {
+    x: 0,
+    y: -1,
+}));
+event = await received;
+assert.ok(event instanceof StickEvent);
+assert.deepEqual([event.x, event.y, event.distance], [0, -1, 1]);
+assert.equal(event.angle, -Math.PI / 2);
 
 // Built-in event classes are rebuilt with their class on the other side
 received = next(display, Events.BUTTON_DOWN);

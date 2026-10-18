@@ -6,10 +6,11 @@
   "main": "src/index.js",
   "exports": "./src/index.js",
   "files": [
-    "src"
+    "src",
+    "controller"
   ],
   "scripts": {
-    "test": "cd test && npm install --silent && node --experimental-eventsource e2e.test.js",
+    "test": "cd test && npm install --silent && node --experimental-eventsource e2e.test.js && node controller.test.js",
     "demo": "npx serve ."
   },
   "repository": {

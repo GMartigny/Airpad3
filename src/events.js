@@ -12,6 +12,7 @@ export const Events = Object.freeze({
     // Controller → display
     BUTTON_DOWN: "buttondown",
     BUTTON_UP: "buttonup",
+    STICK_MOVE: "stickmove",
     ROTATE: "rotate",
     LOCK: "lock",
     UNLOCK: "unlock",
@@ -64,6 +65,56 @@ export class ButtonEvent extends AirpadEvent {
      */
     get button () {
         return this.detail.button;
+    }
+}
+
+/**
+ * Position of the controller stick, `x` and `y` from -1 to 1 (`y` goes down, like the screen).
+ * Sent when the stick moves, and with `x = y = 0` when it's released.
+ * @example new StickEvent(Events.STICK_MOVE, { x: 0.5, y: -1 })
+ */
+export class StickEvent extends AirpadEvent {
+    /**
+     * @param {Events.STICK_MOVE} type -
+     * @param {{x?: number, y?: number}} init -
+     */
+    constructor (type, { x = 0, y = 0 } = {}) {
+        super(type, {
+            x,
+            y,
+        });
+    }
+
+    /**
+     * Horizontal position, from -1 (left) to 1 (right)
+     * @return {number}
+     */
+    get x () {
+        return this.detail.x;
+    }
+
+    /**
+     * Vertical position, from -1 (up) to 1 (down)
+     * @return {number}
+     */
+    get y () {
+        return this.detail.y;
+    }
+
+    /**
+     * Distance from the center, from 0 to 1
+     * @return {number}
+     */
+    get distance () {
+        return Math.min(1, Math.hypot(this.x, this.y));
+    }
+
+    /**
+     * Direction in radians, 0 pointing right (like `Math.atan2`)
+     * @return {number}
+     */
+    get angle () {
+        return Math.atan2(this.y, this.x);
     }
 }
 
@@ -150,6 +201,7 @@ export class LockEvent extends AirpadEvent {
 const registry = new Map([
     [Events.BUTTON_DOWN, ButtonEvent],
     [Events.BUTTON_UP, ButtonEvent],
+    [Events.STICK_MOVE, StickEvent],
     [Events.ROTATE, RotateEvent],
     [Events.VIBRATE, VibrateEvent],
     [Events.LOCK, LockEvent],

@@ -19,7 +19,7 @@ Everything goes through events. Both ends are native `EventTarget`s: listen with
 // Display (computer)
 import { host, Events, VibrateEvent } from "airpad3";
 
-const display = await host({ controllerUrl: "remote/" });
+const display = await host(); // uses the default controller page
 showQrCode(display.url);
 
 display.addEventListener(Events.OPEN, () => console.log("Controller connected"));
@@ -27,15 +27,41 @@ display.addEventListener(Events.BUTTON_DOWN, (event) => {
     console.log(`${event.button} pressed`);
     display.send(new VibrateEvent(Events.VIBRATE, { pattern: 30 }));
 });
+display.addEventListener(Events.STICK_MOVE, ({ x, y }) => player.move(x, y));
 display.addEventListener(Events.ROTATE, event => console.log(event.orientation));
 display.addEventListener(Events.LOCK, () => pauseGame());
 
-// Controller (phone)
+// Controller (phone): only needed for a custom controller page
 import { join, Events, ButtonEvent } from "airpad3";
 
 const pad = await join(location.hash.slice(1)); // resolves once connected
 pad.send(new ButtonEvent(Events.BUTTON_DOWN, { button: "A" }));
 ```
+
+### Default controller
+
+The lib ships a ready-to-use controller page (`controller/index.html`), used by default by `host()`:
+
+- left half: a floating stick, it starts where the finger lands and moves relative to it
+- right half: two buttons stacked, each one a quarter of the screen, `A` on top and `B` below
+
+It sends `STICK_MOVE`, `BUTTON_DOWN` and `BUTTON_UP` by itself, along with the automatic `ROTATE`, `LOCK` and `UNLOCK`. It goes fullscreen on first touch.
+
+To mount it in your own page, with other button names:
+
+```js
+import { join, createController } from "airpad3";
+
+const pad = await join(location.hash.slice(1));
+createController(pad, { buttons: ["Jump", "Fire"] });
+```
+
+| `createController` option | Default | Description |
+| --- | --- | --- |
+| `element` | `document.body` | Where to mount the controller |
+| `buttons` | `["A", "B"]` | Button names, top to bottom |
+| `stickRadius` | `0.15` | Stick radius, relative to the smallest screen side |
+| `fullscreen` | `true` | Go fullscreen on first touch |
 
 ### Events
 
@@ -44,6 +70,7 @@ All types are available as constants on `Events`.
 | Constant | Class | Direction | Description |
 | --- | --- | --- | --- |
 | `BUTTON_DOWN`, `BUTTON_UP` | `ButtonEvent` (`button`) | phone → computer | A button pressed or released |
+| `STICK_MOVE` | `StickEvent` (`x`, `y`, `distance`, `angle`) | phone → computer | Stick position, `x` and `y` from -1 to 1 (`y` goes down). At most once per frame, `0, 0` on release |
 | `ROTATE` | `RotateEvent` (`orientation`) | phone → computer | Switched between `"portrait"` and `"landscape"`. **Sent automatically**, and once on connection |
 | `LOCK`, `UNLOCK` | `LockEvent` (`locked`) | phone → computer | Screen locked or unlocked (page hidden or visible). **Sent automatically** |
 | `VIBRATE` | `VibrateEvent` (`pattern`) | computer → phone | Vibrates the phone by default, cancel with `preventDefault()` |
@@ -86,6 +113,7 @@ pad.send(new JumpEvent("jump", { height: 3 }));
 | `peer.isOpen` | Whether the connection is open |
 | `peer.ready` | Promise resolved when the connection opens, rejected if it fails before |
 | `peer.close()` | Close the connection |
+| `createController(peer, options)` | Mount the default controller UI |
 
 ### Options
 
@@ -94,7 +122,7 @@ pad.send(new JumpEvent("jump", { height: 3 }));
 | `server` | `https://ntfy.sh` | ntfy server (you can host your own) |
 | `iceServers` | Google STUN | STUN/TURN servers |
 | `timeout` | 5 min (computer), 15 s (phone) | Max pairing delay |
-| `controllerUrl` | – | Controller page URL, used to build `display.url` (`host` only) |
+| `controllerUrl` | hosted default controller | Controller page URL, used to build `display.url` (`host` only) |
 | `deviceEvents` | `true` | Send `ROTATE`, `LOCK` and `UNLOCK` automatically (`join` only) |
 
 ## Demo
@@ -117,7 +145,7 @@ Open `/demo/` on the computer and scan the QR code with a phone on the same netw
 npm test
 ```
 
-The test runs a local fake ntfy server and two Node WebRTC peers (`node-datachannel`).
+The tests run a local fake ntfy server with two Node WebRTC peers (`node-datachannel`), and the default controller in a simulated DOM (`jsdom`).
 
 ## License
 

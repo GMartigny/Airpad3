@@ -3,10 +3,12 @@ import { Events, RESERVED_EVENTS, reviveEvent } from "./events.js";
 import { watchDevice } from "./device.js";
 
 export { DEFAULT_SERVER } from "./signaling.js";
+export { createController } from "./controller.js";
 export {
     Events,
     AirpadEvent,
     ButtonEvent,
+    StickEvent,
     RotateEvent,
     VibrateEvent,
     LockEvent,
@@ -14,6 +16,12 @@ export {
 } from "./events.js";
 
 const TOPIC_PREFIX = "airpad-";
+
+/**
+ * Hosted default controller page (see `controller/index.html`)
+ * @type {string}
+ */
+export const DEFAULT_CONTROLLER_URL = "https://gmartigny.github.io/Airpad3/controller/";
 const DEFAULT_ICE_SERVERS = [
     {
         urls: "stun:stun.l.google.com:19302",
@@ -219,14 +227,14 @@ export class Peer extends EventTarget {
 /**
  * Display side (computer): create a session and wait for a controller.
  * @param {AirpadOptions & {controllerUrl?: string}} [options] -
- * @return {Promise<Peer & {id: string, url?: string}>}
+ * @return {Promise<Peer & {id: string, url: string}>}
  */
 export async function host (options = {}) {
     const {
         server,
         iceServers = DEFAULT_ICE_SERVERS,
         timeout = 5 * 60 * 1000,
-        controllerUrl,
+        controllerUrl = DEFAULT_CONTROLLER_URL,
     } = options;
 
     const id = randomId();
@@ -248,11 +256,12 @@ export async function host (options = {}) {
 
     const peer = new Peer(connection, Promise.resolve(channel));
     peer.id = id;
-    if (controllerUrl) {
-        const url = new URL(controllerUrl, globalThis.location?.href);
-        url.hash = id;
-        peer.url = url.toString();
+    const url = new URL(controllerUrl, globalThis.location?.href);
+    if (server) {
+        url.searchParams.set("server", server);
     }
+    url.hash = id;
+    peer.url = url.toString();
 
     signaling.wait("answer", {
         since: published.id,

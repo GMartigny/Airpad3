@@ -4,5 +4,8 @@
     "node-datachannel": "^0.33.4"
   },
   "private": true,
-  "type": "module"
+  "type": "module",
+  "devDependencies": {
+    "jsdom": "^29.1.1"
+  }
 }
