@@ -6,10 +6,12 @@ Pairing goes through [ntfy.sh](https://ntfy.sh), a free public HTTP pub/sub. Onc
 
 ## How it works
 
-1. The display creates a WebRTC offer and publishes it on the ntfy topic `airpad-<id>`.
-2. The QR code holds the controller URL, with the ID in the fragment: `…/remote/#<id>`.
-3. The controller reads the offer and publishes its answer on the same topic.
-4. The display receives the answer (SSE, with a polling fallback) and the direct connection opens.
+1. The display creates a session, listening on the ntfy topic `airpad-<id>`.
+2. The QR code holds the controller page URL, with the ID in the fragment: `…/controller.html#<id>`.
+3. The controller says hello on the topic, the display answers with a fresh WebRTC offer.
+4. The controller publishes its answer, and the direct connection opens.
+
+The session lives until the display closes it: a controller can leave and come back with the same ID, or another one can take its place.
 
 ## Usage
 
@@ -19,7 +21,7 @@ Everything goes through events. Both ends are native `EventTarget`s: listen with
 // Display (computer)
 import { host, Events, VibrateEvent } from "airpad3";
 
-const display = await host(); // uses the default controller page
+const display = await host(); // controller page: "controller.html", next to the current page
 showQrCode(display.url);
 
 display.addEventListener(Events.OPEN, () => console.log("Controller connected"));
@@ -31,23 +33,40 @@ display.addEventListener(Events.STICK_MOVE, ({ x, y }) => player.move(x, y));
 display.addEventListener(Events.ROTATE, event => console.log(event.orientation));
 display.addEventListener(Events.LOCK, () => pauseGame());
 
-// Controller (phone): only needed for a custom controller page
+// Controller (phone), for a fully custom controller page
 import { join, Events, ButtonEvent } from "airpad3";
 
 const pad = await join(location.hash.slice(1)); // resolves once connected
 pad.send(new ButtonEvent(Events.BUTTON_DOWN, { button: "A" }));
 ```
 
-### Default controller
+### Controller page
 
-The lib ships a ready-to-use controller page (`controller/index.html`), used by default by `host()`:
+`host()` points the QR code to `controller.html`, next to the display page (change it with `controllerUrl`). Serving it only takes:
 
-- left half: a floating stick, it starts where the finger lands and moves relative to it
-- right half: two buttons stacked, each one a quarter of the screen, `A` on top and `B` below
+```html
+<!-- controller.html -->
+<script type="module">
+    import { mountController } from "airpad3";
+    mountController();
+</script>
+```
 
-It sends `STICK_MOVE`, `BUTTON_DOWN` and `BUTTON_UP` by itself, along with the automatic `ROTATE`, `LOCK` and `UNLOCK`. It goes fullscreen on first touch.
+`mountController()` joins the session from the URL, mounts the default controller and handles the connection status:
 
-To mount it in your own page, with other button names:
+- it remembers the last session: opening the page without `#id` resumes it, so a lost URL isn't a problem
+- when disconnected, it shows a reconnect button, and reconnects by itself when the page becomes visible again (unlocked phone)
+
+The default controller has a floating stick on the left half (it starts where the finger lands and moves relative to it) and two buttons stacked on the right half, each one a quarter of the screen, `A` on top and `B` below. It sends `STICK_MOVE`, `BUTTON_DOWN` and `BUTTON_UP` by itself, along with the automatic `ROTATE`, `LOCK` and `UNLOCK`, and goes fullscreen on first touch.
+
+| `mountController` option | Default | Description |
+| --- | --- | --- |
+| `joinOptions` | `{}` | Options passed to `join()`. `server` defaults to the `?server=` URL parameter |
+| `storageKey` | `"airpad:session"` | `localStorage` key of the last session |
+| `onConnect` | – | Called with the new `Peer` after each (re)connection, to listen to events |
+| every `createController` option | | See below |
+
+To mount only the controller UI on a peer you joined yourself:
 
 ```js
 import { join, createController } from "airpad3";
@@ -106,14 +125,15 @@ pad.send(new JumpEvent("jump", { height: 3 }));
 
 | Member | Description |
 | --- | --- |
-| `host(options)` | Create a session (computer side). Resolves with a `Peer` having `id` and `url` |
+| `host(options)` | Create a session (computer side). Resolves with a `Peer` having `id` and `url`, `OPEN` and `CLOSE` fire each time a controller connects or leaves |
 | `join(id, options)` | Join a session (phone side). Resolves with an open `Peer` |
 | `peer.send(event)` | Dispatch an event on the remote peer |
 | `peer.addEventListener(type, listener)` | Listen to remote or lifecycle events |
 | `peer.isOpen` | Whether the connection is open |
 | `peer.ready` | Promise resolved when the connection opens, rejected if it fails before |
 | `peer.close()` | Close the connection |
-| `createController(peer, options)` | Mount the default controller UI |
+| `mountController(options)` | Turn the page into a controller (join, UI, status, resume) |
+| `createController(peer, options)` | Mount the default controller UI on a peer |
 
 ### Options
 
@@ -121,13 +141,13 @@ pad.send(new JumpEvent("jump", { height: 3 }));
 | --- | --- | --- |
 | `server` | `https://ntfy.sh` | ntfy server (you can host your own) |
 | `iceServers` | Google STUN | STUN/TURN servers |
-| `timeout` | 5 min (computer), 15 s (phone) | Max pairing delay |
-| `controllerUrl` | hosted default controller | Controller page URL, used to build `display.url` (`host` only) |
+| `timeout` | 15 s | Max pairing delay (`join` only) |
+| `controllerUrl` | `"controller.html"` | Controller page URL, resolved against the current page (`host` only). `HOSTED_CONTROLLER_URL` points to a ready-made one, for quick tests |
 | `deviceEvents` | `true` | Send `ROTATE`, `LOCK` and `UNLOCK` automatically (`join` only) |
 
 ## Demo
 
-Live at [airpad3.vercel.app](https://airpad3.vercel.app): open it on a computer and scan the QR code with a phone. The default controller is hosted at [airpad3.vercel.app/controller/](https://airpad3.vercel.app/controller/).
+Live at [airpad3.vercel.app](https://airpad3.vercel.app): open it on a computer and scan the QR code with a phone.
 
 To run it locally:
 

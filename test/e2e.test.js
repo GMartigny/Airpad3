@@ -111,36 +111,20 @@ const next = (target, type) => new Promise(resolve => target.addEventListener(ty
 /**
  * libdatachannel (the native WebRTC behind node-datachannel) sometimes rejects the answer with
  * "Got a remote candidate without ICE transport" and closes the connection.
- * This race is specific to the test environment, so pairing is retried a few times.
- * @return {Promise<{display: Peer, pad: Peer, initialRotate: Promise<Event>}>}
+ * This race is specific to the test environment, so joining is retried a few times.
+ * The display session survives failed attempts, which is also what this checks.
+ * @param {Peer} display -
+ * @return {Promise<Peer>} the controller, once both sides are open
  */
-async function pair () {
+async function connect (display) {
     for (let attempt = 1; ; attempt++) {
-        const display = await host({
-            ...options,
-            controllerUrl: "https://example.com/remote/",
-        });
-        const initialRotate = next(display, Events.ROTATE);
-        const displayOpen = new Promise((resolve, reject) => {
-            display.addEventListener(Events.OPEN, resolve, {
-                once: true,
-            });
-            display.addEventListener(Events.ERROR, ({ detail }) => reject(detail), {
-                once: true,
-            });
-        });
-        displayOpen.catch(() => {});
+        const displayOpen = next(display, Events.OPEN);
         try {
             const pad = await join(display.id, options);
-            await displayOpen;
-            return {
-                display,
-                pad,
-                initialRotate,
-            };
+            await withTimeout(displayOpen, 5000);
+            return pad;
         }
         catch (error) {
-            display.close();
             if (attempt >= 3) {
                 throw error;
             }
@@ -148,7 +132,22 @@ async function pair () {
     }
 }
 
-const { display, pad, initialRotate } = await pair();
+/**
+ * @param {Promise} promise -
+ * @param {number} timeout -
+ * @return {Promise}
+ */
+const withTimeout = (promise, timeout) => Promise.race([
+    promise,
+    new Promise((resolve, reject) => setTimeout(() => reject(new Error("test timed out")), timeout)),
+]);
+
+const display = await host({
+    ...options,
+    controllerUrl: "https://example.com/remote/",
+});
+const initialRotate = next(display, Events.ROTATE);
+const pad = await connect(display);
 assert.match(display.id, /^[a-z0-9]{16}$/);
 assert.equal(display.url, `https://example.com/remote/?server=${encodeURIComponent(server)}#${display.id}`);
 assert.ok(pad instanceof EventTarget);
@@ -248,13 +247,44 @@ assert.throws(() => pad.send(new CustomEvent(Events.CLOSE)), /reserved/);
 assert.throws(() => pad.send("buttondown"), /expects an Event/);
 assert.throws(() => registerEvent(Events.OPEN, JumpEvent), /reserved/);
 
-await assert.rejects(join("unknown", options), /session not found/);
+await assert.rejects(join("unknown", {
+    ...options,
+    timeout: 1500,
+}), /session not found/);
 
-const closed = next(display, Events.CLOSE);
+// The session survives the controller leaving: a controller can join again with the same ID
+let closed = next(display, Events.CLOSE);
 pad.close();
 await closed;
+assert.equal(display.isOpen, false);
+const pad2 = await connect(display);
+assert.ok(display.isOpen && pad2.isOpen);
+
+// Another controller takes over: the previous one is disconnected
+const pad2Closed = next(pad2, Events.CLOSE);
+closed = next(display, Events.CLOSE);
+const pad3 = await connect(display);
+await closed;
+await withTimeout(pad2Closed, 5000);
+assert.ok(display.isOpen && pad3.isOpen);
+assert.equal(pad2.isOpen, false);
+
+received = next(display, Events.BUTTON_DOWN);
+pad3.send(new ButtonEvent(Events.BUTTON_DOWN, {
+    button: "B",
+}));
+assert.equal((await received).button, "B");
+
+// Closing the display ends the session
+closed = next(pad3, Events.CLOSE);
 display.close();
+await withTimeout(closed, 5000);
+await assert.rejects(join(display.id, {
+    ...options,
+    timeout: 1500,
+}), /session not found/);
+
 ntfy.closeAllConnections();
 ntfy.close();
-console.log("✓ pairing, device events, event classes both ways, default actions, custom events, close, unknown session");
+console.log("✓ pairing, device events, event classes both ways, default actions, custom events, reconnection, takeover, session end, unknown session");
 process.exit(0);

@@ -48,10 +48,8 @@ const qrLink = document.getElementById("qr");
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
 
-const display = await host({
-    // Default controller page shipped with the lib, served locally for the demo
-    controllerUrl: "../controller/",
-});
+// The controller page is "controller.html", next to this page
+const display = await host();
 
 const qr = qrcode(0, "M");
 qr.addData(display.url);
@@ -67,10 +65,14 @@ const player = { x: 300, y: 180, size: 40, color: "#C9211E" };
 const colors = ["#C9211E", "#2E86DE", "#10AC84", "#F6B93B"];
 const speed = 6;
 
+let running = false;
 display.addEventListener(Events.OPEN, () => {
     document.getElementById("pairing").classList.add("hidden");
     canvas.classList.remove("hidden");
-    requestAnimationFrame(loop);
+    if (!running) {
+        running = true;
+        requestAnimationFrame(loop);
+    }
 });
 
 display.addEventListener(Events.BUTTON_DOWN, ({ button }) => {
@@ -105,11 +107,14 @@ display.addEventListener(Events.UNLOCK, () => {
     paused = false;
 });
 
+// The session survives: the same QR code (or the controller page) reconnects
 display.addEventListener(Events.CLOSE, () => {
-    status.textContent = "Controller disconnected. Reload the page to play again.";
+    keys.clear();
+    stick.x = 0;
+    stick.y = 0;
+    status.textContent = "Controller disconnected. Scan again, or reopen the controller page to resume.";
     canvas.classList.add("hidden");
     document.getElementById("pairing").classList.remove("hidden");
-    qrLink.classList.add("hidden");
 });
 
 display.addEventListener(Events.ERROR, ({ detail: error }) => {

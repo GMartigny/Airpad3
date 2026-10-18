@@ -3,7 +3,7 @@ import { Events, RESERVED_EVENTS, reviveEvent } from "./events.js";
 import { watchDevice } from "./device.js";
 
 export { DEFAULT_SERVER } from "./signaling.js";
-export { createController } from "./controller.js";
+export { createController, mountController } from "./controller.js";
 export {
     Events,
     AirpadEvent,
@@ -18,10 +18,17 @@ export {
 const TOPIC_PREFIX = "airpad-";
 
 /**
- * Hosted default controller page (see `controller/index.html`)
+ * Default controller page, relative to the display page
  * @type {string}
  */
-export const DEFAULT_CONTROLLER_URL = "https://airpad3.vercel.app/controller/";
+export const DEFAULT_CONTROLLER_URL = "controller.html";
+
+/**
+ * Ready-made controller page hosted with the demo, for quick tests
+ * @type {string}
+ */
+export const HOSTED_CONTROLLER_URL = "https://airpad3.vercel.app/controller/";
+
 const DEFAULT_ICE_SERVERS = [
     {
         urls: "stun:stun.l.google.com:19302",
@@ -29,10 +36,21 @@ const DEFAULT_ICE_SERVERS = [
 ];
 
 /**
+ * Internal method to plug a WebRTC connection into a peer
+ * @type {symbol}
+ */
+const ATTACH = Symbol("attach");
+
+/**
+ * Internal hook called when the peer is closed by its owner
+ * @type {symbol}
+ */
+const DISPOSE = Symbol("dispose");
+
+/**
  * @typedef {Object} AirpadOptions
  * @property {string} [server="https://ntfy.sh"] - ntfy server used for pairing
  * @property {RTCIceServer[]} [iceServers] - STUN/TURN servers
- * @property {number} [timeout] - max pairing delay, in milliseconds
  */
 
 /**
@@ -95,59 +113,27 @@ function withTimeout (promise, timeout) {
  *
  * Lifecycle events, dispatched locally: `Events.OPEN`, `Events.CLOSE`
  * and `Events.ERROR` (the error is in `event.detail`).
+ * On the display side, a session outlives its controllers:
+ * `OPEN` and `CLOSE` are dispatched each time a controller connects or leaves.
  */
 export class Peer extends EventTarget {
+    #connection;
     #channel;
+    #open = false;
+    #closed = false;
 
     /**
-     * @param {RTCPeerConnection} connection -
-     * @param {Promise<RTCDataChannel>} channelPromise -
+     * Resolved when the connection first opens
+     * @type {Promise<void>}
      */
-    constructor (connection, channelPromise) {
-        super();
+    ready;
 
-        /**
-         * Underlying WebRTC connection
-         * @type {RTCPeerConnection}
-         */
-        this.connection = connection;
-
-        const failed = new Promise((resolve, reject) => {
-            connection.addEventListener("connectionstatechange", () => {
-                if (["failed", "closed"].includes(connection.connectionState) && !this.isOpen) {
-                    reject(new Error("Airpad: WebRTC connection failed"));
-                }
-            });
-        });
-
-        const opened = channelPromise.then((channel) => {
-            this.#channel = channel;
-            channel.addEventListener("message", ({ data }) => this.#receive(data));
-            channel.addEventListener("close", () => this.#dispatch(Events.CLOSE));
-
-            if (channel.readyState === "open") {
-                return undefined;
-            }
-            return new Promise((resolve) => {
-                channel.addEventListener("open", () => resolve(), {
-                    once: true,
-                });
-            });
-        });
-
-        /**
-         * Resolved when the connection opens, rejected if it fails before
-         * @type {Promise<void>}
-         */
-        this.ready = Promise.race([opened, failed]).then(
-            () => this.#dispatch(Events.OPEN),
-            (error) => {
-                this.#dispatch(Events.ERROR, error);
-                throw error;
-            },
-        );
-        // Failures are reported through the "error" event, avoid unhandled rejections
-        this.ready.catch(() => {});
+    /**
+     * Current underlying WebRTC connection
+     * @return {RTCPeerConnection|undefined}
+     */
+    get connection () {
+        return this.#connection;
     }
 
     /**
@@ -155,7 +141,7 @@ export class Peer extends EventTarget {
      * @return {boolean}
      */
     get isOpen () {
-        return this.#channel?.readyState === "open";
+        return this.#open && this.#channel?.readyState === "open";
     }
 
     /**
@@ -181,11 +167,109 @@ export class Peer extends EventTarget {
     }
 
     /**
-     * Close the connection.
+     * Close the connection (and the session, on the display side).
      */
     close () {
-        this.#channel?.close();
-        this.connection.close();
+        if (this.#closed) {
+            return;
+        }
+        this.#closed = true;
+        this[DISPOSE]?.();
+        this.#detach();
+    }
+
+    /**
+     * Plug a WebRTC connection, replacing the current one.
+     * @param {RTCPeerConnection} connection -
+     * @param {Promise<RTCDataChannel>} channelPromise -
+     * @return {Promise<void>} resolved when open, rejected if it fails before
+     */
+    [ATTACH] (connection, channelPromise) {
+        this.#detach();
+        this.#connection = connection;
+        const isCurrent = () => connection === this.#connection;
+
+        let state = "connecting";
+        let fail;
+        const failed = new Promise((resolve, reject) => {
+            fail = reject;
+        });
+        const lost = () => {
+            if (!isCurrent() || state === "closed") {
+                return;
+            }
+            const wasOpen = state === "open";
+            state = "closed";
+            this.#open = false;
+            if (wasOpen) {
+                this.#dispatch(Events.CLOSE);
+            }
+            else {
+                fail(new Error("Airpad: WebRTC connection failed"));
+            }
+        };
+        connection.addEventListener("connectionstatechange", () => {
+            if (["failed", "closed"].includes(connection.connectionState)) {
+                lost();
+            }
+        });
+
+        const opened = channelPromise.then((channel) => {
+            if (!isCurrent()) {
+                return failed;
+            }
+            this.#channel = channel;
+            channel.addEventListener("message", ({ data }) => {
+                if (isCurrent()) {
+                    this.#receive(data);
+                }
+            });
+            channel.addEventListener("close", lost);
+            if (channel.readyState === "open") {
+                return undefined;
+            }
+            return new Promise((resolve) => {
+                channel.addEventListener("open", () => resolve(), {
+                    once: true,
+                });
+            });
+        });
+
+        const result = Promise.race([opened, failed]).then(
+            () => {
+                if (!isCurrent() || state === "closed") {
+                    throw new Error("Airpad: WebRTC connection failed");
+                }
+                state = "open";
+                this.#open = true;
+                this.#dispatch(Events.OPEN);
+            },
+            (error) => {
+                this.#dispatch(Events.ERROR, error);
+                throw error;
+            },
+        );
+        // Failures are reported through the "error" event, avoid unhandled rejections
+        result.catch(() => {});
+        return result;
+    }
+
+    /**
+     * Close the current connection, if any.
+     */
+    #detach () {
+        const connection = this.#connection;
+        if (!connection) {
+            return;
+        }
+        const wasOpen = this.#open;
+        this.#open = false;
+        this.#connection = undefined;
+        this.#channel = undefined;
+        connection.close();
+        if (wasOpen) {
+            this.#dispatch(Events.CLOSE);
+        }
     }
 
     /**
@@ -206,7 +290,7 @@ export class Peer extends EventTarget {
         const event = reviveEvent(message.type, message.detail);
         const notCanceled = this.dispatchEvent(event);
         if (notCanceled && typeof event.defaultAction === "function") {
-            // Default actions are best effort (no vibration support, orientation lock refused…)
+            // Default actions are best effort (no vibration support…)
             Promise.resolve()
                 .then(() => event.defaultAction())
                 .catch(() => {});
@@ -225,15 +309,17 @@ export class Peer extends EventTarget {
 }
 
 /**
- * Display side (computer): create a session and wait for a controller.
+ * Display side (computer): create a session and wait for controllers.
+ * The session stays open until `close()`: a controller can leave and come back
+ * (or another one can take its place) with the same ID.
  * @param {AirpadOptions & {controllerUrl?: string}} [options] -
+ * `controllerUrl` is resolved against the current page (default: "controller.html")
  * @return {Promise<Peer & {id: string, url: string}>}
  */
 export async function host (options = {}) {
     const {
         server,
         iceServers = DEFAULT_ICE_SERVERS,
-        timeout = 5 * 60 * 1000,
         controllerUrl = DEFAULT_CONTROLLER_URL,
     } = options;
 
@@ -241,20 +327,7 @@ export async function host (options = {}) {
     const signaling = createSignaling(TOPIC_PREFIX + id, {
         server,
     });
-
-    const connection = new RTCPeerConnection({
-        iceServers,
-    });
-    const channel = connection.createDataChannel("airpad");
-
-    await connection.setLocalDescription(await connection.createOffer());
-    await gatherCandidates(connection);
-    const published = await signaling.publish({
-        type: "offer",
-        sdp: connection.localDescription.sdp,
-    });
-
-    const peer = new Peer(connection, Promise.resolve(channel));
+    const peer = new Peer();
     peer.id = id;
     const url = new URL(controllerUrl, globalThis.location?.href);
     if (server) {
@@ -263,27 +336,88 @@ export async function host (options = {}) {
     url.hash = id;
     peer.url = url.toString();
 
-    signaling.wait("answer", {
-        since: published.id,
-        timeout,
-    })
-        .then(({ sdp }) => connection.setRemoteDescription({
-            type: "answer",
-            sdp,
-        }))
-        .catch(error => peer.dispatchEvent(new CustomEvent(Events.ERROR, {
-            detail: error,
-        })));
+    /**
+     * Offers are prepared in advance, so a controller gets one right away
+     * @return {Promise<{connection: RTCPeerConnection, channel: RTCDataChannel, sdp: string, createdAt: number}>}
+     */
+    const prepare = async () => {
+        const connection = new RTCPeerConnection({
+            iceServers,
+        });
+        const channel = connection.createDataChannel("airpad");
+        await connection.setLocalDescription(await connection.createOffer());
+        await gatherCandidates(connection);
+        return {
+            connection,
+            channel,
+            sdp: connection.localDescription.sdp,
+            createdAt: Date.now(),
+        };
+    };
+    const reportError = error => peer.dispatchEvent(new CustomEvent(Events.ERROR, {
+        detail: error,
+    }));
+
+    let next = prepare();
+    let pending;
+    let resolveReady;
+    peer.ready = new Promise((resolve) => {
+        resolveReady = resolve;
+    });
+
+    const onMessage = async (message) => {
+        try {
+            if (message.type === "hello" && message.nonce) {
+                let offer = await next;
+                // Don't hand out an offer left unused for too long
+                if (Date.now() - offer.createdAt > 60 * 1000) {
+                    offer.connection.close();
+                    offer = await prepare();
+                }
+                next = prepare();
+                pending?.connection.close();
+                pending = {
+                    ...offer,
+                    nonce: message.nonce,
+                };
+                await signaling.publish({
+                    type: "offer",
+                    nonce: message.nonce,
+                    sdp: offer.sdp,
+                });
+            }
+            else if (message.type === "answer" && message.nonce && message.nonce === pending?.nonce) {
+                const { connection, channel } = pending;
+                pending = undefined;
+                await connection.setRemoteDescription({
+                    type: "answer",
+                    sdp: message.sdp,
+                });
+                peer[ATTACH](connection, Promise.resolve(channel)).then(resolveReady, () => {});
+            }
+        }
+        catch (error) {
+            reportError(error);
+        }
+    };
+
+    const unsubscribe = signaling.subscribe(onMessage);
+    peer[DISPOSE] = () => {
+        unsubscribe();
+        pending?.connection.close();
+        next.then(({ connection }) => connection.close(), () => {});
+    };
 
     return peer;
 }
 
 /**
  * Controller side (phone): join a session from its ID.
- * Resolves once the channel is open.
+ * Resolves once the connection is open.
  * @param {string} id - ID read from the QR code
- * @param {AirpadOptions & {deviceEvents?: boolean}} [options] - `deviceEvents` (default `true`)
- * sends `Events.ROTATE`, `Events.LOCK` and `Events.UNLOCK` automatically
+ * @param {AirpadOptions & {timeout?: number, deviceEvents?: boolean}} [options] -
+ * `timeout` (default 15s) max pairing delay,
+ * `deviceEvents` (default `true`) sends `Events.ROTATE`, `Events.LOCK` and `Events.UNLOCK` automatically
  * @return {Promise<Peer>}
  */
 export async function join (id, options = {}) {
@@ -294,11 +428,26 @@ export async function join (id, options = {}) {
         deviceEvents = true,
     } = options;
 
+    const start = Date.now();
+    const remaining = () => Math.max(0, timeout - (Date.now() - start));
     const signaling = createSignaling(TOPIC_PREFIX + id, {
         server,
     });
-    const offer = await signaling.last("offer");
-    if (!offer) {
+
+    // Say hello, the display answers with a fresh offer for this nonce
+    const nonce = randomId();
+    const hello = await signaling.publish({
+        type: "hello",
+        nonce,
+    });
+    let offer;
+    try {
+        offer = await signaling.wait(message => message.type === "offer" && message.nonce === nonce, {
+            since: hello.id,
+            timeout: remaining(),
+        });
+    }
+    catch {
         throw new Error("Airpad: session not found");
     }
 
@@ -310,6 +459,9 @@ export async function join (id, options = {}) {
             once: true,
         });
     });
+    const peer = new Peer();
+    peer.id = id;
+    peer.ready = peer[ATTACH](connection, channelPromise);
 
     await connection.setRemoteDescription({
         type: "offer",
@@ -319,15 +471,15 @@ export async function join (id, options = {}) {
     await gatherCandidates(connection);
     await signaling.publish({
         type: "answer",
+        nonce,
         sdp: connection.localDescription.sdp,
     });
 
-    const peer = new Peer(connection, channelPromise);
     try {
-        await withTimeout(peer.ready, timeout);
+        await withTimeout(peer.ready, remaining());
     }
     catch (error) {
-        connection.close();
+        peer.close();
         throw error;
     }
 

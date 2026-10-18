@@ -108,5 +108,106 @@ const custom = createController(peer, {
 });
 assert.deepEqual([...custom.element.querySelectorAll("button")].map(button => button.textContent), ["Jump", "Fire"]);
 
-console.log("✓ controller: layout, relative stick, clamping, throttling, release, multi-touch buttons");
+// --- mountController: session ID from the URL or from the last session
+const { mountController } = await import("../src/index.js");
+
+/**
+ * @param {string} url -
+ */
+const navigate = (url) => {
+    const dom = new JSDOM("<!DOCTYPE html><body></body>", {
+        url,
+        pretendToBeVisual: true,
+    });
+    Object.assign(globalThis, {
+        document: dom.window.document,
+        location: dom.window.location,
+        localStorage: dom.window.localStorage,
+    });
+    return dom;
+};
+const statusText = () => document.querySelector(".airpad-status p").textContent;
+const statusShown = () => !document.querySelector(".airpad-status").hidden;
+const tick = () => new Promise(resolve => setTimeout(resolve, 10));
+
+/**
+ * Fake join: records calls, resolves with a fake peer, or rejects for unknown IDs
+ */
+const joins = [];
+const fakeJoin = async (id, options) => {
+    joins.push([id, options.server]);
+    if (id === "over") {
+        throw new Error("Airpad: session not found");
+    }
+    const fake = new EventTarget();
+    fake.isOpen = true;
+    fake.send = () => {};
+    fake.close = () => {
+        fake.isOpen = false;
+    };
+    return fake;
+};
+
+// ID in the URL: joins it, remembers it, mounts the controller
+let dom = navigate("https://game.test/controller.html?server=https://ntfy.test#abc");
+let mounted = mountController({
+    join: fakeJoin,
+    fullscreen: false,
+});
+await tick();
+assert.deepEqual(joins.at(-1), ["abc", "https://ntfy.test"]);
+assert.equal(localStorage.getItem("airpad:session"), "abc");
+assert.ok(!statusShown());
+assert.equal(document.querySelectorAll(".airpad-controller").length, 1);
+
+// Disconnected: shows a reconnect button, reconnecting keeps a single controller
+const firstPeer = mounted.peer;
+firstPeer.isOpen = false;
+firstPeer.dispatchEvent(new CustomEvent(Events.CLOSE));
+assert.ok(statusShown());
+assert.equal(statusText(), "Disconnected");
+document.querySelector(".airpad-status button").click();
+await tick();
+assert.equal(joins.length, 2);
+assert.notEqual(mounted.peer, firstPeer);
+assert.ok(!statusShown());
+assert.equal(document.querySelectorAll(".airpad-controller").length, 1);
+mounted.destroy();
+
+// No ID in the URL: resumes the last session
+const stored = dom.window.localStorage;
+dom = navigate("https://game.test/controller.html");
+dom.window.localStorage.setItem("airpad:session", "abc");
+mounted = mountController({
+    join: fakeJoin,
+    fullscreen: false,
+});
+assert.equal(statusText(), "Resuming last session…");
+await tick();
+assert.equal(joins.at(-1)[0], "abc");
+assert.ok(!statusShown());
+mounted.destroy();
+
+// Last session is over: forgets it and asks to scan again
+dom.window.localStorage.setItem("airpad:session", "over");
+mounted = mountController({
+    join: fakeJoin,
+    fullscreen: false,
+});
+await tick();
+assert.equal(dom.window.localStorage.getItem("airpad:session"), null);
+assert.match(statusText(), /scan the QR code/);
+mounted.destroy();
+
+// Nothing to join
+mounted = mountController({
+    join: fakeJoin,
+    fullscreen: false,
+});
+assert.equal(statusText(), "Scan the QR code shown on the screen");
+assert.equal(joins.length, 4);
+mounted.destroy();
+assert.ok(stored);
+
+console.log("✓ controller: layout, relative stick, clamping, throttling, release, multi-touch buttons, mountController (URL ID, resume, session over, reconnect)");
 process.exit(0);

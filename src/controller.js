@@ -1,4 +1,5 @@
 import { ButtonEvent, Events, StickEvent } from "./events.js";
+import { join } from "./index.js";
 
 const STYLE = `
 .airpad-controller {
@@ -256,6 +257,192 @@ export function createController (peer, options = {}) {
                 cancelAnimationFrame(frame);
             }
             root.remove();
+        },
+    };
+}
+
+const STATUS_STYLE = `
+.airpad-status {
+    position: fixed;
+    inset: 0;
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    padding: 16px;
+    text-align: center;
+    background: #1e1e1ef0;
+    color: #eee;
+    font-family: system-ui, sans-serif;
+}
+.airpad-status[hidden] {
+    display: none;
+}
+.airpad-status button {
+    border: none;
+    border-radius: 8px;
+    padding: 12px 24px;
+    font: inherit;
+    font-weight: bold;
+    color: #fff;
+    background: #2e86de;
+}
+.airpad-status button[hidden] {
+    display: none;
+}
+`;
+
+/**
+ * @param {Storage|undefined} storage -
+ * @param {string} key -
+ * @return {string|undefined}
+ */
+function readStorage (storage, key) {
+    try {
+        return storage?.getItem(key) ?? undefined;
+    }
+    catch {
+        return undefined;
+    }
+}
+
+/**
+ * @param {Storage|undefined} storage -
+ * @param {string} key -
+ * @param {string} [value] - removes the key when undefined
+ */
+function writeStorage (storage, key, value) {
+    try {
+        if (value === undefined) {
+            storage?.removeItem(key);
+        }
+        else {
+            storage?.setItem(key, value);
+        }
+    }
+    catch {
+        // Storage disabled (private mode…): nothing to remember
+    }
+}
+
+/**
+ * Turn the current page into a full controller:
+ * joins the session from the URL (`#id`), or the last one if the ID is missing,
+ * mounts the default controller and handles connection status and reconnection.
+ * A controller page only needs: `mountController()`.
+ * @param {Object} [options] - also accepts every `createController` option
+ * @param {Object} [options.joinOptions] - options passed to `join()`, `server` defaults to the `?server=` URL parameter
+ * @param {string} [options.storageKey="airpad:session"] - where the last session ID is remembered
+ * @param {Function} [options.onConnect] - called with the new peer after each (re)connection
+ * @return {{readonly peer: import("./index.js").Peer|undefined, reconnect: Function, destroy: Function}}
+ */
+export function mountController (options = {}) {
+    const {
+        element = document.body,
+        joinOptions = {},
+        storageKey = "airpad:session",
+        onConnect,
+        join: joinSession,
+        ...controllerOptions
+    } = options;
+    const storage = globalThis.localStorage;
+    const server = joinOptions.server ?? new URLSearchParams(globalThis.location?.search).get("server") ?? undefined;
+
+    // --- Status overlay
+    const status = div("airpad-status");
+    const style = document.createElement("style");
+    style.textContent = STATUS_STYLE;
+    const message = document.createElement("p");
+    const action = document.createElement("button");
+    action.type = "button";
+    action.textContent = "Reconnect";
+    status.append(style, message, action);
+    element.append(status);
+    const show = (text, withAction = false) => {
+        message.textContent = text;
+        action.hidden = !withAction;
+        status.hidden = false;
+    };
+
+    // --- Stable target for the controller, the peer changes on each reconnection
+    let peer;
+    const proxy = {
+        get isOpen () {
+            return Boolean(peer?.isOpen);
+        },
+        send: event => peer?.send(event),
+    };
+    let controller;
+
+    const id = globalThis.location?.hash.slice(1) || readStorage(storage, storageKey);
+    const fromStorage = !globalThis.location?.hash.slice(1);
+    let connecting = false;
+
+    const connect = async () => {
+        if (connecting || peer?.isOpen) {
+            return;
+        }
+        connecting = true;
+        show(fromStorage ? "Resuming last session…" : "Connecting…");
+        try {
+            peer = await (joinSession ?? join)(id, {
+                ...joinOptions,
+                server,
+            });
+            writeStorage(storage, storageKey, id);
+            status.hidden = true;
+            controller ??= createController(proxy, {
+                element,
+                ...controllerOptions,
+            });
+            peer.addEventListener(Events.CLOSE, () => show("Disconnected", true), {
+                once: true,
+            });
+            onConnect?.(peer);
+        }
+        catch (error) {
+            if (fromStorage) {
+                writeStorage(storage, storageKey);
+                show("Last session is over, scan the QR code on the screen");
+            }
+            else {
+                show(error.message.replace(/^Airpad: /, ""), true);
+            }
+        }
+        finally {
+            connecting = false;
+        }
+    };
+
+    action.addEventListener("click", connect);
+
+    // Coming back to the page (unlocked phone…): reconnect by itself
+    const onVisible = () => {
+        if (document.visibilityState === "visible" && controller && !peer?.isOpen) {
+            connect();
+        }
+    };
+    document.addEventListener("visibilitychange", onVisible);
+
+    if (id) {
+        connect();
+    }
+    else {
+        show("Scan the QR code shown on the screen");
+    }
+
+    return {
+        get peer () {
+            return peer;
+        },
+        reconnect: connect,
+        destroy () {
+            document.removeEventListener("visibilitychange", onVisible);
+            peer?.close();
+            controller?.destroy();
+            status.remove();
         },
     };
 }
