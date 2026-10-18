@@ -19,9 +19,9 @@ const { createController, Events, ButtonEvent, StickEvent } = await import("../s
 // Fake connected peer that records what is sent
 const sent = [];
 const peer = {
-    isOpen: true,
-    // Like Peer.send(): nothing is sent when the connection isn't open
-    send: event => peer.isOpen && Boolean(sent.push(event)),
+    isConnected: true,
+    // Like Peer.send(): nothing is sent when not connected
+    send: event => peer.isConnected && Boolean(sent.push(event)),
 };
 
 const { element, destroy } = createController(peer, {
@@ -95,7 +95,7 @@ assert.ok(buttons[1].classList.contains("pressed"));
 assert.ok(!buttons[0].classList.contains("pressed"));
 
 // Nothing is sent once the connection is closed
-peer.isOpen = false;
+peer.isConnected = false;
 sent.length = 0;
 pointer(buttons[1], "pointerup", { id: 3 });
 assert.equal(sent.length, 0);
@@ -156,10 +156,11 @@ const fakeJoin = async (id, options) => {
         throw new Error("Airpad: session not found");
     }
     const fake = new EventTarget();
-    fake.isOpen = true;
+    fake.number = joins.length;
+    fake.isConnected = true;
     fake.send = () => {};
     fake.close = () => {
-        fake.isOpen = false;
+        fake.isConnected = false;
     };
     return fake;
 };
@@ -175,11 +176,12 @@ assert.deepEqual(joins.at(-1), ["abc", "https://ntfy.test"]);
 assert.equal(localStorage.getItem("airpad:session"), "abc");
 assert.ok(!statusShown());
 assert.equal(document.querySelectorAll(".airpad-controller").length, 1);
+assert.equal(document.querySelector(".airpad-player").textContent, "Player 1", "shows the player number");
 
 // Disconnected: shows a reconnect button, reconnecting keeps a single controller
 const firstPeer = mounted.peer;
-firstPeer.isOpen = false;
-firstPeer.dispatchEvent(new CustomEvent(Events.CLOSE));
+firstPeer.isConnected = false;
+firstPeer.dispatchEvent(new CustomEvent(Events.DISCONNECT));
 assert.ok(statusShown());
 assert.equal(statusText(), "Disconnected");
 document.querySelector(".airpad-status button").click();

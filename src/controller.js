@@ -265,6 +265,22 @@ export function createController (peer, options = {}) {
 }
 
 const STATUS_STYLE = `
+.airpad-player {
+    position: fixed;
+    top: 12px;
+    left: 50%;
+    z-index: 1;
+    transform: translateX(-50%);
+    padding: 4px 14px;
+    border-radius: 999px;
+    background: #000000a0;
+    color: #fff;
+    font: bold 1em system-ui, sans-serif;
+    pointer-events: none;
+}
+.airpad-player[hidden] {
+    display: none;
+}
 .airpad-status {
     position: fixed;
     inset: 0;
@@ -333,7 +349,7 @@ function writeStorage (storage, key, value) {
 /**
  * Turn the current page into a full controller:
  * joins the session from the URL (`#id`), or the last one if the ID is missing,
- * mounts the default controller and handles connection status and reconnection.
+ * mounts the default controller, shows the player number, and handles connection status and reconnection.
  * A controller page only needs: `mountController()`.
  * @param {Object} [options] - also accepts every `createController` option
  * @param {Object} [options.joinOptions] - options passed to `join()`, `server` defaults to the `?server=` URL parameter
@@ -362,7 +378,9 @@ export function mountController (options = {}) {
     action.type = "button";
     action.textContent = "Reconnect";
     status.append(style, message, action);
-    element.append(status);
+    const badge = div("airpad-player");
+    badge.hidden = true;
+    element.append(status, badge);
     const show = (text, withAction = false) => {
         message.textContent = text;
         action.hidden = !withAction;
@@ -372,8 +390,8 @@ export function mountController (options = {}) {
     // --- Stable target for the controller, the peer changes on each reconnection
     let peer;
     const proxy = {
-        get isOpen () {
-            return Boolean(peer?.isOpen);
+        get isConnected () {
+            return Boolean(peer?.isConnected);
         },
         send: event => Boolean(peer?.send(event)),
     };
@@ -384,7 +402,7 @@ export function mountController (options = {}) {
     let connecting = false;
 
     const connect = async () => {
-        if (connecting || peer?.isOpen) {
+        if (connecting || peer?.isConnected) {
             return;
         }
         connecting = true;
@@ -400,7 +418,10 @@ export function mountController (options = {}) {
                 element,
                 ...controllerOptions,
             });
-            peer.addEventListener(Events.CLOSE, () => show("Disconnected", true), {
+            // Player number given by the display
+            badge.textContent = `Player ${peer.number}`;
+            badge.hidden = peer.number === undefined;
+            peer.addEventListener(Events.DISCONNECT, () => show("Disconnected", true), {
                 once: true,
             });
             onConnect?.(peer);
@@ -423,7 +444,7 @@ export function mountController (options = {}) {
 
     // Coming back to the page (unlocked phone…): reconnect by itself
     const onVisible = () => {
-        if (document.visibilityState === "visible" && controller && !peer?.isOpen) {
+        if (document.visibilityState === "visible" && controller && !peer?.isConnected) {
             connect();
         }
     };
@@ -446,6 +467,7 @@ export function mountController (options = {}) {
             peer?.close();
             controller?.destroy();
             status.remove();
+            badge.remove();
         },
     };
 }

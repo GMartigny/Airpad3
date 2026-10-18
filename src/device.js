@@ -12,7 +12,7 @@ import { Events, LockEvent, RotateEvent } from "./events.js";
 export function watchDevice (peer) {
     const cleanups = [];
     const send = (event) => {
-        if (peer.isOpen) {
+        if (peer.isConnected) {
             peer.send(event);
         }
     };

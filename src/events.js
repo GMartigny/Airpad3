@@ -5,8 +5,8 @@
  */
 export const Events = Object.freeze({
     // Connection lifecycle, dispatched locally (can't be sent)
-    OPEN: "open",
-    CLOSE: "close",
+    CONNECT: "connect",
+    DISCONNECT: "disconnect",
     ERROR: "error",
 
     // Controller → display
@@ -25,7 +25,7 @@ export const Events = Object.freeze({
  * Lifecycle events, dispatched locally only.
  * @type {Set<string>}
  */
-export const RESERVED_EVENTS = new Set([Events.OPEN, Events.CLOSE, Events.ERROR]);
+export const RESERVED_EVENTS = new Set([Events.CONNECT, Events.DISCONNECT, Events.ERROR]);
 
 /**
  * Base class of every event exchanged between peers.

@@ -1,6 +1,6 @@
 # Airpad3
 
-Connect a computer and a phone with a QR code, using WebRTC, with no server to host.
+Connect phones to a computer with a QR code, using WebRTC, with no server to host. As many controllers as needed.
 
 Pairing goes through [ntfy.sh](https://ntfy.sh), a free public HTTP pub/sub. Once connected, both devices talk peer-to-peer over a WebRTC DataChannel.
 
@@ -11,34 +11,32 @@ Pairing goes through [ntfy.sh](https://ntfy.sh), a free public HTTP pub/sub. Onc
 3. The controller says hello on the topic, the display answers with a fresh WebRTC offer.
 4. The controller publishes its answer, and the direct connection opens.
 
-The session lives until the display closes it: a controller can leave and come back with the same ID, or another one can take its place.
+Every phone that scans the QR code joins as a new player, with its own number. The session lives until the display closes it: a player can leave and come back, it gets its number back (each phone remembers its player ID).
 
 ## Usage
 
-Everything goes through events. Both ends are native `EventTarget`s: listen with `addEventListener`, and `send(event)` dispatches the event on the other device, rebuilt with the same class.
+Everything goes through events. Every object is a native `EventTarget`: listen with `addEventListener`, and `send(event)` dispatches the event on the other side, rebuilt with the same class.
 
 ```js
-// Display (computer)
 import { host, Events, VibrateEvent } from "airpad3";
 
-const display = await host(); // controller page: "controller.html", next to the current page
-showQrCode(display.url);
+const session = await host(); // controller page: "controller.html", next to the current page
+showQrCode(session.url);
 
-display.addEventListener(Events.OPEN, () => console.log("Controller connected"));
-display.addEventListener(Events.BUTTON_DOWN, (event) => {
-    console.log(`${event.button} pressed`);
-    display.send(new VibrateEvent(Events.VIBRATE, { pattern: 30 }));
+session.addEventListener(Events.CONNECT, ({ controller }) => addPlayer(controller.number));
+session.addEventListener(Events.STICK_MOVE, ({ controller, x, y }) => players[controller.number].move(x, y));
+session.addEventListener(Events.BUTTON_DOWN, ({ controller, button }) => {
+    console.log(`Player ${controller.number} pressed ${button}`);
+    controller.send(new VibrateEvent(Events.VIBRATE, { pattern: 30 })); // this controller only
 });
-display.addEventListener(Events.STICK_MOVE, ({ x, y }) => player.move(x, y));
-display.addEventListener(Events.ROTATE, event => console.log(event.orientation));
-display.addEventListener(Events.LOCK, () => pauseGame());
+session.addEventListener(Events.DISCONNECT, ({ controller }) => pausePlayer(controller.number));
 
-// Controller (phone), for a fully custom controller page
-import { join, Events, ButtonEvent } from "airpad3";
-
-const pad = await join(location.hash.slice(1)); // resolves once connected
-pad.send(new ButtonEvent(Events.BUTTON_DOWN, { button: "A" }));
+session.send(new CustomEvent("gameover")); // every connected controller
 ```
+
+- Events sent by a controller are dispatched on its `Peer` (`session.controllers`) **and** on the session, with `event.controller`.
+- `session.send(event)` reaches every connected controller, `controller.send(event)` a single one.
+- A controller keeps its `number` (from 1) for the whole session, even after a disconnection.
 
 ### Controller page
 
@@ -54,6 +52,7 @@ pad.send(new ButtonEvent(Events.BUTTON_DOWN, { button: "A" }));
 
 `mountController()` joins the session from the URL, mounts the default controller and handles the connection status:
 
+- it shows the player number given by the display
 - it remembers the last session: opening the page without `#id` resumes it, so a lost URL isn't a problem
 - when disconnected, it shows a reconnect button, and reconnects by itself when the page becomes visible again (unlocked phone)
 
@@ -66,12 +65,16 @@ The default controller has a floating stick on the left half (it starts where th
 | `onConnect` | – | Called with the new `Peer` after each (re)connection, to listen to events |
 | every `createController` option | | See below |
 
-To mount only the controller UI on a peer you joined yourself:
+For a fully custom controller page, join yourself and send your own events:
 
 ```js
-import { join, createController } from "airpad3";
+import { join, Events, ButtonEvent, createController } from "airpad3";
 
-const pad = await join(location.hash.slice(1));
+const pad = await join(location.hash.slice(1)); // resolves once connected
+console.log(`You are player ${pad.number}`);
+pad.send(new ButtonEvent(Events.BUTTON_DOWN, { button: "Start" }));
+
+// Or mount the default controller UI on it, with other button names
 createController(pad, { buttons: ["Jump", "Fire"] });
 ```
 
@@ -93,7 +96,7 @@ All types are available as constants on `Events`.
 | `ROTATE` | `RotateEvent` (`orientation`) | phone → computer | Switched between `"portrait"` and `"landscape"`. **Sent automatically**, and once on connection |
 | `LOCK`, `UNLOCK` | `LockEvent` (`locked`) | phone → computer | Screen locked or unlocked (page hidden or visible). **Sent automatically** |
 | `VIBRATE` | `VibrateEvent` (`pattern`) | computer → phone | Vibrates the phone by default, cancel with `preventDefault()` |
-| `OPEN`, `CLOSE`, `ERROR` | `CustomEvent` | local | Connection lifecycle, the error is in `event.detail`. Can't be sent |
+| `CONNECT`, `DISCONNECT`, `ERROR` | `CustomEvent` | local | Connection lifecycle, the error is in `event.detail`. On the session, they come with `event.controller`. Can't be sent |
 
 Automatic events can be turned off with `join(id, { deviceEvents: false })`.
 
@@ -102,7 +105,7 @@ Automatic events can be turned off with `join(id, { deviceEvents: false })`.
 Any event can be sent, its `detail` must be JSON-serializable:
 
 ```js
-display.send(new CustomEvent("score", { detail: 42 }));
+session.send(new CustomEvent("score", { detail: 42 }));
 pad.addEventListener("score", event => console.log(event.detail));
 ```
 
@@ -125,15 +128,19 @@ pad.send(new JumpEvent("jump", { height: 3 }));
 
 | Member | Description |
 | --- | --- |
-| `host(options)` | Create a session (computer side). Resolves with a `Peer` having `id` and `url`, `OPEN` and `CLOSE` fire each time a controller connects or leaves |
-| `join(id, options)` | Join a session (phone side). Resolves with an open `Peer` |
-| `peer.send(event)` | Dispatch an event on the remote peer. Returns `false` (and sends nothing) when not connected |
-| `peer.addEventListener(type, listener)` | Listen to remote or lifecycle events |
-| `peer.isOpen` | Whether the connection is open |
-| `peer.ready` | Promise resolved when the connection opens, rejected if it fails before |
-| `peer.close()` | Close the connection |
-| `mountController(options)` | Turn the page into a controller (join, UI, status, resume) |
+| `host(options)` | Create a session (computer side). Resolves with a `Session` |
+| `session.id`, `session.url` | Session ID, and the controller URL to put in the QR code |
+| `session.controllers` | Every `Peer` that joined, connected or not, by number |
+| `session.send(event)` | Dispatch an event on every connected controller. Returns `false` when none got it |
+| `session.close()` | End the session, disconnecting every controller |
+| `join(id, options)` | Join a session (phone side). Resolves with a connected `Peer` |
+| `peer.number` | Player number, from 1 |
+| `peer.send(event)` | Dispatch an event on the other side. Returns `false` (and sends nothing) when not connected |
+| `peer.isConnected` | Whether the connection is open |
+| `peer.close()` | Disconnect. On the computer, the player can still come back |
+| `mountController(options)` | Turn the page into a controller (join, UI, player number, status, resume) |
 | `createController(peer, options)` | Mount the default controller UI on a peer |
+| `addEventListener(type, listener)` | On a session or a peer, for remote or lifecycle events |
 
 ### Options
 
@@ -142,12 +149,13 @@ pad.send(new JumpEvent("jump", { height: 3 }));
 | `server` | `https://ntfy.sh` | ntfy server (you can host your own) |
 | `iceServers` | Google STUN | STUN/TURN servers |
 | `timeout` | 15 s | Max pairing delay (`join` only) |
+| `player` | remembered on the device | Player ID, to get the same number back when reconnecting (`join` only) |
 | `controllerUrl` | `"controller.html"` | Controller page URL, resolved against the current page (`host` only). `HOSTED_CONTROLLER_URL` points to a ready-made one, for quick tests |
 | `deviceEvents` | `true` | Send `ROTATE`, `LOCK` and `UNLOCK` automatically (`join` only) |
 
 ## Demo
 
-Live at [airpad3.vercel.app](https://airpad3.vercel.app): open it on a computer and scan the QR code with a phone.
+Live at [airpad3.vercel.app](https://airpad3.vercel.app): open it on a computer and scan the QR code with one or more phones.
 
 To run it locally:
 
@@ -162,6 +170,8 @@ Open `/demo/` on the computer and scan the QR code with a phone on the same netw
 - ntfy topics are public: the random 16-character ID is enough to avoid collisions, but signaling data is not encrypted.
 - ntfy.sh applies per-IP rate limits to anonymous users.
 - Outside a local network, some NATs require a TURN server.
+- Each controller has its own WebRTC connection to the computer: fine for a living room full of players, not for hundreds.
+- Anyone with the session ID (in the QR code) can join, and a player ID is trusted as given.
 
 ## Tests
 
