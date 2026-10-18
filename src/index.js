@@ -97,17 +97,15 @@ export class Peer extends EventTarget {
          */
         this.connection = connection;
 
-        connection.addEventListener("connectionstatechange", () => {
-            if (connection.connectionState === "failed") {
-                this.#dispatch("error", new Error("Airpad: WebRTC connection failed"));
-            }
+        const failed = new Promise((resolve, reject) => {
+            connection.addEventListener("connectionstatechange", () => {
+                if (["failed", "closed"].includes(connection.connectionState) && !this.isOpen) {
+                    reject(new Error("Airpad: WebRTC connection failed"));
+                }
+            });
         });
 
-        /**
-         * Resolved when the connection opens
-         * @type {Promise<void>}
-         */
-        this.ready = channelPromise.then((channel) => {
+        const opened = channelPromise.then((channel) => {
             this.#channel = channel;
             channel.addEventListener("message", ({ data }) => this.#receive(data));
             channel.addEventListener("close", () => this.#dispatch("close"));
@@ -120,7 +118,21 @@ export class Peer extends EventTarget {
                     once: true,
                 });
             });
-        }).then(() => this.#dispatch("open"));
+        });
+
+        /**
+         * Resolved when the connection opens, rejected if it fails before
+         * @type {Promise<void>}
+         */
+        this.ready = Promise.race([opened, failed]).then(
+            () => this.#dispatch("open"),
+            (error) => {
+                this.#dispatch("error", error);
+                throw error;
+            },
+        );
+        // Failures are reported through the "error" event, avoid unhandled rejections
+        this.ready.catch(() => {});
     }
 
     /**

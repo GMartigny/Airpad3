@@ -71,21 +71,51 @@ const options = {
     iceServers: [],
 };
 
-const display = await host({
-    ...options,
-    controllerUrl: "https://example.com/remote/",
-});
+/**
+ * libdatachannel (the native WebRTC behind node-datachannel) sometimes rejects the answer with
+ * "Got a remote candidate without ICE transport" and closes the connection.
+ * This race is specific to the test environment, so pairing is retried a few times.
+ * @return {Promise<{display: Peer, pad: Peer}>}
+ */
+async function pair () {
+    for (let attempt = 1; ; attempt++) {
+        const display = await host({
+            ...options,
+            controllerUrl: "https://example.com/remote/",
+        });
+        const displayOpen = new Promise((resolve, reject) => {
+            display.addEventListener("open", resolve, {
+                once: true,
+            });
+            display.addEventListener("error", ({ detail }) => reject(detail), {
+                once: true,
+            });
+        });
+        displayOpen.catch(() => {});
+        try {
+            const pad = await join(display.id, options);
+            await displayOpen;
+            return {
+                display,
+                pad,
+            };
+        }
+        catch (error) {
+            display.close();
+            if (attempt >= 3) {
+                throw error;
+            }
+        }
+    }
+}
+
+const { display, pad } = await pair();
 assert.match(display.id, /^[a-z0-9]{16}$/);
 assert.equal(display.url, `https://example.com/remote/#${display.id}`);
 
 const received = [];
 display.addEventListener("press", event => received.push(event.detail));
-const displayOpen = new Promise(resolve => display.addEventListener("open", resolve, {
-    once: true,
-}));
 
-const pad = await join(display.id, options);
-await displayOpen;
 assert.ok(pad instanceof EventTarget);
 assert.ok(pad.isOpen && display.isOpen);
 

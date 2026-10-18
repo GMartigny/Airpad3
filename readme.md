@@ -45,7 +45,7 @@ pad.send("buttondown", "A");
 | `peer.send(type, detail?)` | Dispatch a `CustomEvent` on the remote peer. `detail` must be JSON-serializable |
 | `peer.addEventListener(type, listener)` | Listen to remote or built-in events |
 | `peer.isOpen` | Whether the connection is open |
-| `peer.ready` | Promise resolved when the connection opens |
+| `peer.ready` | Promise resolved when the connection opens, rejected if it fails before |
 | `peer.close()` | Close the connection |
 
 ### Options
