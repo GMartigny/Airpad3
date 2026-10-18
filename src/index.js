@@ -21,7 +21,7 @@ const TOPIC_PREFIX = "airpad-";
  * Hosted default controller page (see `controller/index.html`)
  * @type {string}
  */
-export const DEFAULT_CONTROLLER_URL = "https://gmartigny.github.io/Airpad3/controller/";
+export const DEFAULT_CONTROLLER_URL = "https://airpad3.vercel.app/controller/";
 const DEFAULT_ICE_SERVERS = [
     {
         urls: "stun:stun.l.google.com:19302",

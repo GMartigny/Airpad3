@@ -127,6 +127,10 @@ pad.send(new JumpEvent("jump", { height: 3 }));
 
 ## Demo
 
+Live at [airpad3.vercel.app](https://airpad3.vercel.app): open it on a computer and scan the QR code with a phone. The default controller is hosted at [airpad3.vercel.app/controller/](https://airpad3.vercel.app/controller/).
+
+To run it locally:
+
 ```sh
 npm run demo
 ```
