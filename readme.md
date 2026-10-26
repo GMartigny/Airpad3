@@ -25,7 +25,7 @@ The default controller UI is built with [Whiskers.js](https://github.com/GMartig
 <script type="importmap">
 {
     "imports": {
-        "@gmartigny/whiskers.js": "https://cdn.jsdelivr.net/npm/@gmartigny/whiskers.js@1.4.0/index.js"
+        "@gmartigny/whiskers.js": "https://cdn.jsdelivr.net/npm/@gmartigny/whiskers.js@2.0.0/dist/index.js"
     }
 }
 </script>

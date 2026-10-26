@@ -27,6 +27,6 @@
   "author": "GMartigny",
   "license": "MIT",
   "dependencies": {
-    "@gmartigny/whiskers.js": "^1.4.0"
+    "@gmartigny/whiskers.js": "^2.0.0"
   }
 }

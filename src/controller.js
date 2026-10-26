@@ -1,4 +1,4 @@
-import { reactive, render, renderStyle } from "@gmartigny/whiskers.js";
+import { reactive, render, renderStyle, unreactive } from "@gmartigny/whiskers.js";
 import { ButtonEvent, Events, StickEvent } from "./events.js";
 import { join } from "./index.js";
 
@@ -205,9 +205,10 @@ export function createController (peer, options = {}) {
             return;
         }
         stick = undefined;
+        // New props replace the previous ones: the position variables go away, the knob stays
         render(base, {
             class: "airpad-stick-base",
-        }, knob);
+        });
         if (frame) {
             cancelAnimationFrame(frame);
         }
@@ -231,15 +232,13 @@ export function createController (peer, options = {}) {
             };
             render(knob, {
                 class: "airpad-stick-knob",
-                "--dx": "0px",
-                "--dy": "0px",
             });
             render(base, {
-                class: "airpad-stick-base active",
+                class: ["airpad-stick-base", "active"],
                 "--x": `${event.clientX - rect.left}px`,
                 "--y": `${event.clientY - rect.top}px`,
                 "--radius": `${radius()}px`,
-            }, knob);
+            });
         },
         "@pointermove": (event) => {
             if (stick?.pointerId !== event.pointerId) {
@@ -275,7 +274,10 @@ export function createController (peer, options = {}) {
          * @return {HTMLButtonElement}
          */
         const draw = pressed => render(button, {
-            class: pressed ? "airpad-button pressed" : "airpad-button",
+            class: {
+                "airpad-button": true,
+                pressed,
+            },
             "@pointerdown": (event) => {
                 event.preventDefault();
                 if (pointerId !== undefined) {
@@ -390,36 +392,33 @@ export function mountController (options = {}) {
 
     let connect;
 
-    // --- Status overlay and player badge, re-rendered on change.
-    // One store per field: Whiskers.js `reactive` only tracks the first field of an object.
-    const status = {
+    // --- Status overlay and player badge, re-rendered on change
+    const ui = {
         // { text: string, action?: boolean }, or undefined when hidden
-        value: undefined,
-    };
-    const player = {
+        status: undefined,
         // Player number given by the display
-        value: undefined,
+        player: undefined,
     };
     const style = renderStyle(STATUS_STYLE);
-    const statusElement = reactive(status, "value", (value, node) => render(node ?? "div", {
+    const statusElement = reactive(ui, "status", (status, node) => render(node ?? "div", {
         class: "airpad-status",
-        hidden: !value,
+        hidden: !status,
     }, [
-        render("p", value?.text ?? ""),
+        render("p", status?.text),
         render("button", {
             type: "button",
-            hidden: !value?.action,
+            hidden: !status?.action,
             "@click": () => connect(true),
         }, "Reconnect"),
     ]));
-    const badge = reactive(player, "value", (value, node) => render(node ?? "div", {
+    const badge = reactive(ui, "player", (player, node) => render(node ?? "div", {
         class: "airpad-player",
-        hidden: value === undefined,
-    }, value === undefined ? undefined : `Player ${value}`));
+        hidden: player === undefined,
+    }, player !== undefined && `Player ${player}`));
     element.append(style, statusElement, badge);
 
     const show = (text, action = false) => {
-        status.value = {
+        ui.status = {
             text,
             action,
         };
@@ -473,12 +472,12 @@ export function mountController (options = {}) {
                 resume,
             });
             writeStorage(storage, storageKey, id);
-            status.value = undefined;
+            ui.status = undefined;
             controller ??= createController(proxy, {
                 element,
                 ...controllerOptions,
             });
-            player.value = peer.number;
+            ui.player = peer.number;
             peer.addEventListener(Events.DISCONNECT, ({ detail }) => {
                 if (detail?.reason === "kicked") {
                     onKicked();
@@ -534,6 +533,7 @@ export function mountController (options = {}) {
             document.removeEventListener("visibilitychange", onVisible);
             peer?.close();
             controller?.destroy();
+            unreactive(ui);
             style.remove();
             statusElement.remove();
             badge.remove();

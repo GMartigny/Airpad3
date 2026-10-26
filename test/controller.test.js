@@ -7,9 +7,10 @@ const { window } = new JSDOM("<!DOCTYPE html><body></body>", {
     pretendToBeVisual: true,
 });
 Object.assign(globalThis, {
-    // Whiskers.js renders through the global window
-    window,
+    // Whiskers.js renders through these globals
     document: window.document,
+    Node: window.Node,
+    Element: window.Element,
     innerWidth: 800,
     innerHeight: 400,
     requestAnimationFrame: window.requestAnimationFrame.bind(window),
@@ -88,7 +89,7 @@ assert.equal(element.querySelector(".airpad-stick-base.active"), null);
 // Buttons, pressed at the same time as the stick (multi-touch)
 sent.length = 0;
 pointer(zone, "pointerdown", { id: 1, x: 100, y: 200 });
-assert.equal(knob.style.getPropertyValue("--dy"), "0px", "a new touch starts with a centered knob");
+assert.equal(knob.style.getPropertyValue("--dy"), "", "a new touch starts with a centered knob (offset removed)");
 pointer(buttons[0], "pointerdown", { id: 2 });
 pointer(buttons[1], "pointerdown", { id: 3 });
 pointer(buttons[0], "pointerup", { id: 2 });
@@ -143,8 +144,9 @@ const navigate = (url) => {
         pretendToBeVisual: true,
     });
     Object.assign(globalThis, {
-        window: dom.window,
         document: dom.window.document,
+        Node: dom.window.Node,
+        Element: dom.window.Element,
         location: dom.window.location,
         history: dom.window.history,
         localStorage: dom.window.localStorage,
