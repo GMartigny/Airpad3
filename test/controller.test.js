@@ -7,6 +7,8 @@ const { window } = new JSDOM("<!DOCTYPE html><body></body>", {
     pretendToBeVisual: true,
 });
 Object.assign(globalThis, {
+    // Whiskers.js renders through the global window
+    window,
     document: window.document,
     innerWidth: 800,
     innerHeight: 400,
@@ -56,7 +58,10 @@ assert.deepEqual([...buttons].map(button => button.textContent), ["A", "B"]);
 
 // Stick: origin where the finger lands, relative movement, clamped to the radius (0.15 × 400 = 60px)
 pointer(zone, "pointerdown", { x: 100, y: 200 });
-assert.ok(element.querySelector(".airpad-stick-base.active"));
+const base = element.querySelector(".airpad-stick-base.active");
+const knob = element.querySelector(".airpad-stick-knob");
+assert.ok(base);
+assert.deepEqual(["--x", "--y", "--radius"].map(name => base.style.getPropertyValue(name)), ["100px", "200px", "60px"], "stick drawn where the finger lands");
 assert.equal(sent.length, 0);
 
 pointer(zone, "pointermove", { x: 130, y: 200 });
@@ -70,6 +75,7 @@ assert.deepEqual([sent[0].x, sent[0].y], [1, 0]);
 pointer(zone, "pointermove", { x: 100, y: 500 });
 await frame();
 assert.deepEqual([sent[1].x, sent[1].y], [0, 1], "clamped to the radius");
+assert.deepEqual([knob.style.getPropertyValue("--dx"), knob.style.getPropertyValue("--dy")], ["0px", "60px"], "knob drawn at the clamped offset");
 
 pointer(zone, "pointermove", { x: 100, y: 500 });
 await frame();
@@ -82,6 +88,7 @@ assert.equal(element.querySelector(".airpad-stick-base.active"), null);
 // Buttons, pressed at the same time as the stick (multi-touch)
 sent.length = 0;
 pointer(zone, "pointerdown", { id: 1, x: 100, y: 200 });
+assert.equal(knob.style.getPropertyValue("--dy"), "0px", "a new touch starts with a centered knob");
 pointer(buttons[0], "pointerdown", { id: 2 });
 pointer(buttons[1], "pointerdown", { id: 3 });
 pointer(buttons[0], "pointerup", { id: 2 });
@@ -136,6 +143,7 @@ const navigate = (url) => {
         pretendToBeVisual: true,
     });
     Object.assign(globalThis, {
+        window: dom.window,
         document: dom.window.document,
         location: dom.window.location,
         history: dom.window.history,

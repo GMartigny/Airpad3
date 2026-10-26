@@ -13,6 +13,24 @@ Pairing goes through [ntfy.sh](https://ntfy.sh), a free public HTTP pub/sub. Onc
 
 Every phone that scans the QR code joins as a new player, with its own number. The session lives until the display closes it: a player can leave and come back, it gets its number back (each phone remembers its player ID).
 
+## Installation
+
+```sh
+npm install airpad3
+```
+
+The default controller UI is built with [Whiskers.js](https://github.com/GMartigny/Whiskers.js), the only dependency. With a bundler, nothing to do. Without one, map it in the page, before any module script:
+
+```html
+<script type="importmap">
+{
+    "imports": {
+        "@gmartigny/whiskers.js": "https://cdn.jsdelivr.net/npm/@gmartigny/whiskers.js@1.4.0/index.js"
+    }
+}
+</script>
+```
+
 ## Usage
 
 Everything goes through events. Every object is a native `EventTarget`: listen with `addEventListener`, and `send(event)` dispatches the event on the other side, rebuilt with the same class.

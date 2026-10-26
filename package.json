@@ -10,7 +10,7 @@
     "controller"
   ],
   "scripts": {
-    "test": "cd test && npm install --silent && node --experimental-eventsource e2e.test.js && node controller.test.js",
+    "test": "npm install --silent && cd test && npm install --silent && node --experimental-eventsource e2e.test.js && node controller.test.js",
     "demo": "npx serve ."
   },
   "repository": {
@@ -25,5 +25,8 @@
     "ntfy"
   ],
   "author": "GMartigny",
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {
+    "@gmartigny/whiskers.js": "^1.4.0"
+  }
 }

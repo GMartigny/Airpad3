@@ -13,6 +13,18 @@
     </style>
 </head>
 <body>
+<!-- The lib imports Whiskers.js by package name: resolve it without a bundler -->
+<script type="importmap">
+{
+    "imports": {
+        "@gmartigny/whiskers.js": "https://cdn.jsdelivr.net/npm/@gmartigny/whiskers.js@1.4.0/index.js"
+    },
+    "integrity": {
+        "https://cdn.jsdelivr.net/npm/@gmartigny/whiskers.js@1.4.0/index.js": "sha384-u0FpoYmtZwxpe37bZ0OSeur2SgWU7wIW1pAvaASU5zETOQH70WLjtd0ac+Go3j8H",
+        "https://cdn.jsdelivr.net/npm/@gmartigny/whiskers.js@1.4.0/reactive.js": "sha384-XLPejtZBfy1OUK1yqWeFENDmGntMKE+IwkDCI3eg0igx6Pd5Ed9asmSJQ4P1OlxU"
+    }
+}
+</script>
 <script type="module">
 import { mountController } from "../src/index.js";
 

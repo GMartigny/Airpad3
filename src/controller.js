@@ -1,94 +1,143 @@
+import { reactive, render, renderStyle } from "@gmartigny/whiskers.js";
 import { ButtonEvent, Events, StickEvent } from "./events.js";
 import { join } from "./index.js";
 
-const STYLE = `
-.airpad-controller {
-    position: fixed;
-    inset: 0;
-    display: grid;
-    grid-template: 1fr 1fr / 1fr 1fr;
-    background: #1e1e1e;
-    color: #eee;
-    font-family: system-ui, sans-serif;
-    touch-action: none;
-    user-select: none;
-    -webkit-user-select: none;
-    -webkit-touch-callout: none;
-    -webkit-tap-highlight-color: transparent;
-    overflow: hidden;
-}
-.airpad-stick-zone {
-    grid-area: 1 / 1 / 3 / 2;
-    position: relative;
-    overflow: hidden;
-}
-.airpad-stick-zone::after {
-    content: "Touch and slide";
-    position: absolute;
-    inset: auto 0 16px;
-    text-align: center;
-    opacity: .3;
-    font-size: .9em;
-}
-.airpad-stick-base {
-    position: absolute;
-    width: calc(var(--airpad-radius) * 2);
-    height: calc(var(--airpad-radius) * 2);
-    margin: calc(var(--airpad-radius) * -1) 0 0 calc(var(--airpad-radius) * -1);
-    border: 2px solid #ffffff40;
-    border-radius: 50%;
-    background: #ffffff10;
-    display: none;
-}
-.airpad-stick-base.active {
-    display: block;
-}
-.airpad-stick-knob {
-    position: absolute;
-    left: 50%;
-    top: 50%;
-    width: 50%;
-    height: 50%;
-    margin: -25% 0 0 -25%;
-    border-radius: 50%;
-    background: #ffffffa0;
-}
-.airpad-button {
-    border: none;
-    border-left: 2px solid #1e1e1e;
-    margin: 0;
-    padding: 0;
-    font: bold 3em system-ui, sans-serif;
-    color: #ffffffd0;
-    background: #c9211e;
-}
-.airpad-button:only-of-type {
-    grid-row: 1 / 3;
-}
-.airpad-button + .airpad-button {
-    border-top: 2px solid #1e1e1e;
-    background: #2e86de;
-}
-.airpad-button.pressed {
-    filter: brightness(1.35);
-}
-`;
+const BACKGROUND = "#1e1e1e";
 
-/**
- * @param {string} className -
- * @return {HTMLDivElement}
- */
-function div (className) {
-    const element = document.createElement("div");
-    element.className = className;
-    return element;
-}
+const CONTROLLER_STYLE = {
+    ".airpad-controller": {
+        position: "fixed",
+        inset: 0,
+        display: "grid",
+        "grid-template": "1fr 1fr / 1fr 1fr",
+        background: BACKGROUND,
+        color: "#eee",
+        "font-family": "system-ui, sans-serif",
+        "touch-action": "none",
+        "user-select": "none",
+        "-webkit-user-select": "none",
+        "-webkit-touch-callout": "none",
+        "-webkit-tap-highlight-color": "transparent",
+        overflow: "hidden",
+    },
+    ".airpad-stick-zone": {
+        "grid-area": "1 / 1 / 3 / 2",
+        position: "relative",
+        overflow: "hidden",
+    },
+    ".airpad-stick-zone::after": {
+        content: "\"Touch and slide\"",
+        position: "absolute",
+        inset: "auto 0 16px",
+        "text-align": "center",
+        opacity: 0.3,
+        "font-size": ".9em",
+    },
+    ".airpad-stick-base": {
+        position: "absolute",
+        left: "var(--x)",
+        top: "var(--y)",
+        width: "calc(var(--radius) * 2)",
+        height: "calc(var(--radius) * 2)",
+        margin: "calc(var(--radius) * -1) 0 0 calc(var(--radius) * -1)",
+        border: "2px solid #ffffff40",
+        "border-radius": "50%",
+        background: "#ffffff10",
+        display: "none",
+    },
+    ".airpad-stick-base.active": {
+        display: "block",
+    },
+    ".airpad-stick-knob": {
+        position: "absolute",
+        left: "50%",
+        top: "50%",
+        width: "50%",
+        height: "50%",
+        margin: "-25% 0 0 -25%",
+        "border-radius": "50%",
+        background: "#ffffffa0",
+        transform: "translate(var(--dx, 0), var(--dy, 0))",
+    },
+    ".airpad-button": {
+        border: "none",
+        "border-left": `2px solid ${BACKGROUND}`,
+        margin: 0,
+        padding: 0,
+        font: "bold 3em system-ui, sans-serif",
+        color: "#ffffffd0",
+        background: "#c9211e",
+    },
+    ".airpad-button:only-of-type": {
+        "grid-row": "1 / 3",
+    },
+    ".airpad-button + .airpad-button": {
+        "border-top": `2px solid ${BACKGROUND}`,
+        background: "#2e86de",
+    },
+    ".airpad-button.pressed": {
+        filter: "brightness(1.35)",
+    },
+};
+
+const STATUS_STYLE = {
+    ".airpad-player": {
+        position: "fixed",
+        top: "12px",
+        left: "50%",
+        "z-index": 1,
+        transform: "translateX(-50%)",
+        padding: "4px 14px",
+        "border-radius": "999px",
+        background: "#000000a0",
+        color: "#fff",
+        font: "bold 1em system-ui, sans-serif",
+        "pointer-events": "none",
+    },
+    ".airpad-status": {
+        position: "fixed",
+        inset: 0,
+        "z-index": 1,
+        display: "flex",
+        "flex-direction": "column",
+        "align-items": "center",
+        "justify-content": "center",
+        gap: "16px",
+        padding: "16px",
+        "text-align": "center",
+        background: `${BACKGROUND}f0`,
+        color: "#eee",
+        "font-family": "system-ui, sans-serif",
+    },
+    ".airpad-status button": {
+        border: "none",
+        "border-radius": "8px",
+        padding: "12px 24px",
+        font: "inherit",
+        "font-weight": "bold",
+        color: "#fff",
+        background: "#2e86de",
+    },
+    ".airpad-player[hidden], .airpad-status[hidden], .airpad-status button[hidden]": {
+        display: "none",
+    },
+};
+
+const RELEASE_EVENTS = ["@pointerup", "@pointercancel", "@lostpointercapture"];
 
 /**
  * @param {number} value -
  * @return {number}
  */
 const round = value => Math.round(value * 1000) / 1000;
+
+/**
+ * Same listener for several events, as Whiskers.js props
+ * @param {string[]} events - prefixed with "@"
+ * @param {Function} listener -
+ * @return {Object}
+ */
+const listenAll = (events, listener) => Object.fromEntries(events.map(event => [event, listener]));
 
 /**
  * Default controller: a floating stick on the left half,
@@ -116,27 +165,6 @@ export function createController (peer, options = {}) {
 
     const send = event => peer.send(event);
 
-    const root = div("airpad-controller");
-    const style = document.createElement("style");
-    style.textContent = STYLE;
-    const zone = div("airpad-stick-zone");
-    const base = div("airpad-stick-base");
-    const knob = div("airpad-stick-knob");
-    base.append(knob);
-    zone.append(base);
-    root.append(style, zone);
-    root.addEventListener("contextmenu", event => event.preventDefault());
-
-    if (fullscreen) {
-        root.addEventListener("pointerdown", () => {
-            if (!document.fullscreenElement) {
-                document.documentElement.requestFullscreen?.()?.catch?.(() => {});
-            }
-        }, {
-            once: true,
-        });
-    }
-
     // --- Stick: starts where the finger lands, moves relative to it
     let stick;
     let sent = {
@@ -145,6 +173,13 @@ export function createController (peer, options = {}) {
     };
     let frame;
     const radius = () => Math.min(globalThis.innerWidth, globalThis.innerHeight) * stickRadius;
+
+    const knob = render("div", {
+        class: "airpad-stick-knob",
+    });
+    const base = render("div", {
+        class: "airpad-stick-base",
+    }, knob);
 
     const flush = () => {
         frame = undefined;
@@ -165,91 +200,124 @@ export function createController (peer, options = {}) {
         frame ??= requestAnimationFrame(flush);
     };
 
-    zone.addEventListener("pointerdown", (event) => {
-        if (stick) {
-            return;
-        }
-        zone.setPointerCapture?.(event.pointerId);
-        const rect = zone.getBoundingClientRect();
-        const r = radius();
-        stick = {
-            pointerId: event.pointerId,
-            originX: event.clientX,
-            originY: event.clientY,
-            x: 0,
-            y: 0,
-        };
-        zone.style.setProperty("--airpad-radius", `${r}px`);
-        base.style.left = `${event.clientX - rect.left}px`;
-        base.style.top = `${event.clientY - rect.top}px`;
-        knob.style.transform = "";
-        base.classList.add("active");
-    });
-
-    zone.addEventListener("pointermove", (event) => {
-        if (stick?.pointerId !== event.pointerId) {
-            return;
-        }
-        const r = radius();
-        let dx = event.clientX - stick.originX;
-        let dy = event.clientY - stick.originY;
-        const distance = Math.hypot(dx, dy);
-        if (distance > r) {
-            dx *= r / distance;
-            dy *= r / distance;
-        }
-        stick.x = dx / r;
-        stick.y = dy / r;
-        knob.style.transform = `translate(${dx}px, ${dy}px)`;
-        scheduleFlush();
-    });
-
     const release = (event) => {
         if (stick?.pointerId !== event.pointerId) {
             return;
         }
         stick = undefined;
-        base.classList.remove("active");
+        render(base, {
+            class: "airpad-stick-base",
+        }, knob);
         if (frame) {
             cancelAnimationFrame(frame);
         }
         flush();
     };
-    ["pointerup", "pointercancel", "lostpointercapture"].forEach(type => zone.addEventListener(type, release));
+
+    const zone = render("div", {
+        class: "airpad-stick-zone",
+        "@pointerdown": (event) => {
+            if (stick) {
+                return;
+            }
+            zone.setPointerCapture?.(event.pointerId);
+            const rect = zone.getBoundingClientRect();
+            stick = {
+                pointerId: event.pointerId,
+                originX: event.clientX,
+                originY: event.clientY,
+                x: 0,
+                y: 0,
+            };
+            render(knob, {
+                class: "airpad-stick-knob",
+                "--dx": "0px",
+                "--dy": "0px",
+            });
+            render(base, {
+                class: "airpad-stick-base active",
+                "--x": `${event.clientX - rect.left}px`,
+                "--y": `${event.clientY - rect.top}px`,
+                "--radius": `${radius()}px`,
+            }, knob);
+        },
+        "@pointermove": (event) => {
+            if (stick?.pointerId !== event.pointerId) {
+                return;
+            }
+            const r = radius();
+            let dx = event.clientX - stick.originX;
+            let dy = event.clientY - stick.originY;
+            const distance = Math.hypot(dx, dy);
+            if (distance > r) {
+                dx *= r / distance;
+                dy *= r / distance;
+            }
+            stick.x = dx / r;
+            stick.y = dy / r;
+            render(knob, {
+                class: "airpad-stick-knob",
+                "--dx": `${dx}px`,
+                "--dy": `${dy}px`,
+            });
+            scheduleFlush();
+        },
+        ...listenAll(RELEASE_EVENTS, release),
+    }, base);
 
     // --- Buttons: each one a quarter of the screen, no empty zone
-    buttons.forEach((name) => {
-        const button = document.createElement("button");
-        button.className = "airpad-button";
-        button.textContent = name;
+    const buttonElements = buttons.map((name) => {
         let pointerId;
+        const button = render("button");
 
-        button.addEventListener("pointerdown", (event) => {
-            event.preventDefault();
-            if (pointerId !== undefined) {
-                return;
-            }
-            pointerId = event.pointerId;
-            button.setPointerCapture?.(event.pointerId);
-            button.classList.add("pressed");
-            send(new ButtonEvent(Events.BUTTON_DOWN, {
-                button: name,
-            }));
-        });
-        const up = (event) => {
-            if (event.pointerId !== pointerId) {
-                return;
-            }
-            pointerId = undefined;
-            button.classList.remove("pressed");
-            send(new ButtonEvent(Events.BUTTON_UP, {
-                button: name,
-            }));
-        };
-        ["pointerup", "pointercancel", "lostpointercapture"].forEach(type => button.addEventListener(type, up));
+        /**
+         * @param {boolean} pressed -
+         * @return {HTMLButtonElement}
+         */
+        const draw = pressed => render(button, {
+            class: pressed ? "airpad-button pressed" : "airpad-button",
+            "@pointerdown": (event) => {
+                event.preventDefault();
+                if (pointerId !== undefined) {
+                    return;
+                }
+                pointerId = event.pointerId;
+                button.setPointerCapture?.(event.pointerId);
+                draw(true);
+                send(new ButtonEvent(Events.BUTTON_DOWN, {
+                    button: name,
+                }));
+            },
+            ...listenAll(RELEASE_EVENTS, (event) => {
+                if (event.pointerId !== pointerId) {
+                    return;
+                }
+                pointerId = undefined;
+                draw(false);
+                send(new ButtonEvent(Events.BUTTON_UP, {
+                    button: name,
+                }));
+            }),
+        }, name);
 
-        root.append(button);
+        return draw(false);
     });
+
+    let wantsFullscreen = fullscreen;
+    const root = render("div", {
+        class: "airpad-controller",
+        "@contextmenu": event => event.preventDefault(),
+        "@pointerdown": () => {
+            if (wantsFullscreen && !document.fullscreenElement) {
+                wantsFullscreen = false;
+                document.documentElement.requestFullscreen?.()?.catch?.(() => {});
+            }
+        },
+    }, [
+        renderStyle(CONTROLLER_STYLE),
+        zone,
+        ...buttonElements,
+    ]);
 
     element.append(root);
 
@@ -263,55 +331,6 @@ export function createController (peer, options = {}) {
         },
     };
 }
-
-const STATUS_STYLE = `
-.airpad-player {
-    position: fixed;
-    top: 12px;
-    left: 50%;
-    z-index: 1;
-    transform: translateX(-50%);
-    padding: 4px 14px;
-    border-radius: 999px;
-    background: #000000a0;
-    color: #fff;
-    font: bold 1em system-ui, sans-serif;
-    pointer-events: none;
-}
-.airpad-player[hidden] {
-    display: none;
-}
-.airpad-status {
-    position: fixed;
-    inset: 0;
-    z-index: 1;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 16px;
-    padding: 16px;
-    text-align: center;
-    background: #1e1e1ef0;
-    color: #eee;
-    font-family: system-ui, sans-serif;
-}
-.airpad-status[hidden] {
-    display: none;
-}
-.airpad-status button {
-    border: none;
-    border-radius: 8px;
-    padding: 12px 24px;
-    font: inherit;
-    font-weight: bold;
-    color: #fff;
-    background: #2e86de;
-}
-.airpad-status button[hidden] {
-    display: none;
-}
-`;
 
 /**
  * @param {Storage|undefined} storage -
@@ -369,22 +388,41 @@ export function mountController (options = {}) {
     const storage = globalThis.localStorage;
     const server = joinOptions.server ?? new URLSearchParams(globalThis.location?.search).get("server") ?? undefined;
 
-    // --- Status overlay
-    const status = div("airpad-status");
-    const style = document.createElement("style");
-    style.textContent = STATUS_STYLE;
-    const message = document.createElement("p");
-    const action = document.createElement("button");
-    action.type = "button";
-    action.textContent = "Reconnect";
-    status.append(style, message, action);
-    const badge = div("airpad-player");
-    badge.hidden = true;
-    element.append(status, badge);
-    const show = (text, withAction = false) => {
-        message.textContent = text;
-        action.hidden = !withAction;
-        status.hidden = false;
+    let connect;
+
+    // --- Status overlay and player badge, re-rendered on change.
+    // One store per field: Whiskers.js `reactive` only tracks the first field of an object.
+    const status = {
+        // { text: string, action?: boolean }, or undefined when hidden
+        value: undefined,
+    };
+    const player = {
+        // Player number given by the display
+        value: undefined,
+    };
+    const style = renderStyle(STATUS_STYLE);
+    const statusElement = reactive(status, "value", (value, node) => render(node ?? "div", {
+        class: "airpad-status",
+        hidden: !value,
+    }, [
+        render("p", value?.text ?? ""),
+        render("button", {
+            type: "button",
+            hidden: !value?.action,
+            "@click": () => connect(true),
+        }, "Reconnect"),
+    ]));
+    const badge = reactive(player, "value", (value, node) => render(node ?? "div", {
+        class: "airpad-player",
+        hidden: value === undefined,
+    }, value === undefined ? undefined : `Player ${value}`));
+    element.append(style, statusElement, badge);
+
+    const show = (text, action = false) => {
+        status.value = {
+            text,
+            action,
+        };
     };
 
     // --- Stable target for the controller, the peer changes on each reconnection
@@ -422,7 +460,7 @@ export function mountController (options = {}) {
     /**
      * @param {boolean} resume - automatic reconnection, not a QR code scan
      */
-    const connect = async (resume) => {
+    connect = async (resume) => {
         if (connecting || finished || peer?.isConnected) {
             return;
         }
@@ -435,14 +473,12 @@ export function mountController (options = {}) {
                 resume,
             });
             writeStorage(storage, storageKey, id);
-            status.hidden = true;
+            status.value = undefined;
             controller ??= createController(proxy, {
                 element,
                 ...controllerOptions,
             });
-            // Player number given by the display
-            badge.textContent = `Player ${peer.number}`;
-            badge.hidden = peer.number === undefined;
+            player.value = peer.number;
             peer.addEventListener(Events.DISCONNECT, ({ detail }) => {
                 if (detail?.reason === "kicked") {
                     onKicked();
@@ -474,8 +510,6 @@ export function mountController (options = {}) {
         }
     };
 
-    action.addEventListener("click", () => connect(true));
-
     // Coming back to the page (unlocked phone…): reconnect by itself
     const onVisible = () => {
         if (document.visibilityState === "visible" && controller && !peer?.isConnected) {
@@ -500,7 +534,8 @@ export function mountController (options = {}) {
             document.removeEventListener("visibilitychange", onVisible);
             peer?.close();
             controller?.destroy();
-            status.remove();
+            style.remove();
+            statusElement.remove();
             badge.remove();
         },
     };
